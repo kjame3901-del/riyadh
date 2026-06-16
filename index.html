@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>利雅得探店地图</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f7f5f0; color: #1a1a1a; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Top bar */
+  .topbar { background: #1a1a1a; color: #fff; padding: 0 16px; height: 52px; display: flex; align-items: center; gap: 12px; z-index: 1000; flex-shrink: 0; }
+  .topbar h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.3px; white-space: nowrap; }
+  .topbar-sep { width: 1px; height: 20px; background: #333; }
+  .search-box { flex: 1; max-width: 280px; position: relative; }
+  .search-box input { width: 100%; background: #2a2a2a; border: none; border-radius: 8px; padding: 7px 12px 7px 32px; color: #fff; font-size: 13px; outline: none; }
+  .search-box input::placeholder { color: #666; }
+  .search-box svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); opacity: 0.5; }
+  .topbar-actions { margin-left: auto; display: flex; gap: 8px; }
+  .btn { padding: 6px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .btn-primary { background: #d4a84b; color: #1a1a1a; }
+  .btn-primary:hover { background: #c49a3c; }
+  .btn-ghost { background: #2a2a2a; color: #ccc; }
+  .btn-ghost:hover { background: #333; color: #fff; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+  /* Layout */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar { width: 340px; background: #fff; border-right: 1px solid #e8e4dc; display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; z-index: 10; }
+  .sidebar-filters { padding: 12px; border-bottom: 1px solid #f0ece4; display: flex; flex-wrap: wrap; gap: 6px; }
+  .filter-btn { padding: 5px 12px; border-radius: 20px; border: 1.5px solid #e0dbd0; background: #fff; font-size: 12px; cursor: pointer; transition: all 0.15s; color: #555; }
+  .filter-btn:hover { border-color: #c49a3c; color: #c49a3c; }
+  .filter-btn.active { background: #1a1a1a; border-color: #1a1a1a; color: #fff; }
+  .filter-btn .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+  .places-list { flex: 1; overflow-y: auto; }
+  .place-item { padding: 14px 16px; border-bottom: 1px solid #f5f2ec; cursor: pointer; transition: background 0.1s; }
+  .place-item:hover { background: #faf8f4; }
+  .place-item.active { background: #fff8ed; border-left: 3px solid #d4a84b; }
+  .place-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .place-cat-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .place-name { font-size: 14px; font-weight: 600; flex: 1; }
+  .place-rating { font-size: 12px; color: #c49a3c; font-weight: 600; }
+  .place-meta { font-size: 12px; color: #888; display: flex; gap: 8px; align-items: center; }
+  .price-tag { background: #f0ece4; padding: 2px 7px; border-radius: 4px; color: #666; }
+  .place-note { font-size: 12px; color: #999; margin-top: 4px; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stars { color: #d4a84b; font-size: 11px; }
+  .empty-state { padding: 40px 20px; text-align: center; color: #aaa; }
+  .empty-state svg { margin-bottom: 12px; opacity: 0.3; }
+
+  /* Map */
+  #map { flex: 1; z-index: 1; }
+
+  /* Detail panel */
+  .detail-panel { position: absolute; right: 16px; bottom: 16px; width: 320px; background: #fff; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); z-index: 500; padding: 20px; display: none; }
+  .detail-panel.open { display: block; }
+  .detail-close { position: absolute; right: 12px; top: 12px; width: 28px; height: 28px; border-radius: 50%; background: #f5f2ec; border: none; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; color: #666; }
+  .detail-cat { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .detail-name { font-size: 20px; font-weight: 700; margin-bottom: 8px; line-height: 1.2; }
+  .detail-rating-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .detail-stars { color: #d4a84b; font-size: 15px; }
+  .detail-rating-num { font-size: 14px; font-weight: 600; }
+  .detail-info { display: grid; gap: 8px; margin-bottom: 14px; }
+  .detail-info-row { display: flex; gap: 8px; font-size: 13px; }
+  .detail-info-label { color: #999; width: 48px; flex-shrink: 0; }
+  .detail-info-val { color: #1a1a1a; }
+  .detail-note-area { background: #faf8f4; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+  .detail-note-area textarea { width: 100%; background: transparent; border: none; font-size: 13px; color: #555; resize: none; outline: none; font-family: inherit; min-height: 60px; }
+  .detail-note-area label { font-size: 11px; color: #bbb; display: block; margin-bottom: 4px; font-weight: 500; }
+  .detail-actions { display: flex; gap: 8px; }
+  .btn-danger { background: #fff0f0; color: #cc3333; border: none; }
+  .btn-danger:hover { background: #ffe0e0; }
+  .my-score { display: flex; gap: 4px; align-items: center; margin-bottom: 14px; }
+  .my-score label { font-size: 12px; color: #999; margin-right: 4px; }
+  .score-star { font-size: 22px; cursor: pointer; color: #ddd; transition: color 0.1s; line-height: 1; }
+  .score-star.lit { color: #d4a84b; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #fff; border-radius: 20px; padding: 28px; width: 100%; max-width: 440px; max-height: 90vh; overflow-y: auto; }
+  .modal h2 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; font-size: 12px; font-weight: 600; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 14px; border: 1.5px solid #e8e4dc; border-radius: 10px; font-size: 14px; outline: none; font-family: inherit; transition: border-color 0.15s; background: #faf8f4; }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: #d4a84b; background: #fff; }
+  .form-group textarea { resize: vertical; min-height: 80px; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .cat-opt { padding: 10px 8px; border: 1.5px solid #e8e4dc; border-radius: 10px; text-align: center; cursor: pointer; font-size: 12px; transition: all 0.15s; background: #faf8f4; }
+  .cat-opt:hover { border-color: #d4a84b; }
+  .cat-opt.selected { border-color: #1a1a1a; background: #1a1a1a; color: #fff; }
+  .cat-opt .cat-icon { font-size: 20px; display: block; margin-bottom: 4px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 24px; }
+  .modal-actions .btn { flex: 1; padding: 12px; font-size: 14px; border-radius: 12px; }
+  .btn-cancel { background: #f5f2ec; color: #555; border: none; }
+  .btn-cancel:hover { background: #ebe7df; }
+  .pick-map-btn { background: #f0ece4; border: 1.5px dashed #c8c0b0; border-radius: 10px; padding: 12px; width: 100%; font-size: 13px; color: #888; cursor: pointer; text-align: center; transition: all 0.15s; }
+  .pick-map-btn:hover { border-color: #d4a84b; color: #c49a3c; background: #fff8ed; }
+  .pick-map-info { font-size: 12px; color: #c49a3c; margin-top: 6px; display: none; }
+
+  /* Picking mode */
+  body.picking #map { cursor: crosshair !important; }
+  .picking-banner { display: none; position: absolute; top: 60px; left: 50%; transform: translateX(-50%); background: #d4a84b; color: #1a1a1a; padding: 10px 20px; border-radius: 30px; font-size: 13px; font-weight: 600; z-index: 1000; box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
+  body.picking .picking-banner { display: block; }
+
+  /* Custom marker */
+  .map-marker { width: 32px; height: 32px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid rgba(255,255,255,0.8); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+  .map-marker span { transform: rotate(45deg); font-size: 14px; }
+
+  /* Scrollbar */
+  .places-list::-webkit-scrollbar { width: 4px; }
+  .places-list::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+
+  /* Stats bar */
+  .stats-bar { padding: 8px 16px; border-top: 1px solid #f0ece4; font-size: 12px; color: #aaa; background: #faf8f4; flex-shrink: 0; }
+
+  @media (max-width: 600px) {
+    .sidebar { width: 100%; height: 40vh; border-right: none; border-top: 1px solid #e8e4dc; order: 2; }
+    .main { flex-direction: column-reverse; }
+    #map { height: 60vh; }
+    .detail-panel { width: calc(100% - 32px); bottom: 42vh; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🗺 利雅得探店</h1>
+  <div class="topbar-sep"></div>
+  <div class="search-box">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input type="text" id="searchInput" placeholder="搜索店名、备注..." oninput="filterPlaces()">
+  </div>
+  <div class="topbar-actions">
+    <button class="btn btn-ghost btn-sm" onclick="exportData()">导出</button>
+    <button class="btn btn-ghost btn-sm" onclick="importData()">导入</button>
+    <button class="btn btn-primary" onclick="openAddModal()">+ 添加</button>
+  </div>
+</div>
+
+<div class="picking-banner">📍 点击地图选择位置</div>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-filters" id="filterBar">
+      <button class="filter-btn active" data-cat="all" onclick="setFilter('all', this)">全部</button>
+    </div>
+    <div class="places-list" id="placesList"></div>
+    <div class="stats-bar" id="statsBar">加载中...</div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<!-- Detail panel -->
+<div class="detail-panel" id="detailPanel">
+  <button class="detail-close" onclick="closeDetail()">×</button>
+  <div class="detail-cat" id="dCat"></div>
+  <div class="detail-name" id="dName"></div>
+  <div class="detail-rating-row">
+    <div class="detail-stars" id="dStars"></div>
+    <div class="detail-rating-num" id="dRating"></div>
+  </div>
+  <div class="detail-info">
+    <div class="detail-info-row"><span class="detail-info-label">价格</span><span class="detail-info-val" id="dPrice"></span></div>
+    <div class="detail-info-row"><span class="detail-info-label">风格</span><span class="detail-info-val" id="dStyle"></span></div>
+    <div class="detail-info-row"><span class="detail-info-label">地址</span><span class="detail-info-val" id="dAddr"></span></div>
+  </div>
+  <div class="my-score">
+    <label>我的评分</label>
+    <span class="score-star" data-v="1" onclick="setMyScore(1)">★</span>
+    <span class="score-star" data-v="2" onclick="setMyScore(2)">★</span>
+    <span class="score-star" data-v="3" onclick="setMyScore(3)">★</span>
+    <span class="score-star" data-v="4" onclick="setMyScore(4)">★</span>
+    <span class="score-star" data-v="5" onclick="setMyScore(5)">★</span>
+  </div>
+  <div class="detail-note-area">
+    <label>个人备注</label>
+    <textarea id="dNote" placeholder="写下你的感受、必点菜、停车建议..." onchange="saveNote()"></textarea>
+  </div>
+  <div class="detail-actions">
+    <button class="btn btn-ghost btn-sm" onclick="editPlace()" style="flex:1">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="deletePlace()" style="flex:1">删除</button>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h2 id="modalTitle">添加新店铺</h2>
+    <input type="hidden" id="editId">
+
+    <div class="form-group">
+      <label>分类</label>
+      <div class="cat-grid" id="catGrid"></div>
+    </div>
+
+    <div class="form-group" id="customCatGroup" style="display:none">
+      <label>自定义分类名称</label>
+      <input type="text" id="customCatName" placeholder="例如：书店、健身房...">
+    </div>
+
+    <div class="form-group">
+      <label>店名</label>
+      <input type="text" id="fName" placeholder="店铺名称">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Google评分 (0-5)</label>
+        <input type="number" id="fRating" min="0" max="5" step="0.1" placeholder="4.5">
+      </div>
+      <div class="form-group">
+        <label>价格区间</label>
+        <select id="fPrice">
+          <option value="">不知道</option>
+          <option value="＄">＄ 便宜</option>
+          <option value="＄＄">＄＄ 中等</option>
+          <option value="＄＄＄">＄＄＄ 偏贵</option>
+          <option value="＄＄＄＄">＄＄＄＄ 高档</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>风格 / 特色</label>
+      <input type="text" id="fStyle" placeholder="例如：地道沙特菜、网红打卡、安静氛围...">
+    </div>
+
+    <div class="form-group">
+      <label>地址（可选）</label>
+      <input type="text" id="fAddr" placeholder="地址或区域描述">
+    </div>
+
+    <div class="form-group">
+      <label>地图位置</label>
+      <button class="pick-map-btn" id="pickMapBtn" onclick="startPickLocation()">📍 点击在地图上选择位置</button>
+      <div class="pick-map-info" id="pickMapInfo"></div>
+    </div>
+
+    <div class="form-group">
+      <label>个人备注</label>
+      <textarea id="fNote" placeholder="必点菜、停车建议、最佳时段..."></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="savePlace()">保存</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImport(event)">
+
+<script>
+// ─── Categories ───────────────────────────────────────────────
+const DEFAULT_CATS = [
+  { id: 'restaurant', name: '餐厅', icon: '🍽', color: '#e8472a' },
+  { id: 'chocolate', name: '巧克力', icon: '🍫', color: '#6b3a2a' },
+  { id: 'hookah', name: '水烟', icon: '💨', color: '#7b5ea7' },
+  { id: 'cafe', name: '咖啡', icon: '☕', color: '#c08040' },
+  { id: 'dessert', name: '甜品', icon: '🧁', color: '#e8799a' },
+  { id: 'other', name: '其他', icon: '📍', color: '#5a8a5a' },
+  { id: 'custom', name: '自定义', icon: '✨', color: '#888' },
+];
+
+let categories = JSON.parse(localStorage.getItem('ryd_cats') || 'null') || DEFAULT_CATS;
+let places = JSON.parse(localStorage.getItem('ryd_places') || '[]');
+let selectedCat = 'all';
+let activeId = null;
+let pendingLat = null, pendingLng = null;
+let isPicking = false;
+let markers = {};
+let map;
+
+// ─── Map init ─────────────────────────────────────────────────
+function initMap() {
+  map = L.map('map', { zoomControl: true }).setView([24.688, 46.722], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
+    maxZoom: 19
+  }).addTo(map);
+
+  map.on('click', function(e) {
+    if (isPicking) {
+      pendingLat = e.latlng.lat.toFixed(6);
+      pendingLng = e.latlng.lng.toFixed(6);
+      document.getElementById('pickMapInfo').style.display = 'block';
+      document.getElementById('pickMapInfo').textContent = `✓ 已选: ${pendingLat}, ${pendingLng}`;
+      stopPickLocation();
+      openAddModal(true);
+    }
+  });
+}
+
+// ─── Markers ──────────────────────────────────────────────────
+function getCat(catId) {
+  return categories.find(c => c.id === catId) || { icon: '📍', color: '#888', name: catId };
+}
+
+function createMarkerIcon(cat) {
+  const c = getCat(cat);
+  return L.divIcon({
+    html: `<div class="map-marker" style="background:${c.color}"><span>${c.icon}</span></div>`,
+    className: '',
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],
+    popupAnchor: [0, -34]
+  });
+}
+
+function renderMarkers() {
+  Object.values(markers).forEach(m => map.removeLayer(m));
+  markers = {};
+  const filtered = getFiltered();
+  filtered.forEach(p => {
+    if (!p.lat || !p.lng) return;
+    const m = L.marker([p.lat, p.lng], { icon: createMarkerIcon(p.cat) }).addTo(map);
+    m.on('click', () => openDetail(p.id));
+    markers[p.id] = m;
+  });
+}
+
+// ─── Filter & list ────────────────────────────────────────────
+function getFiltered() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  return places.filter(p => {
+    const catOk = selectedCat === 'all' || p.cat === selectedCat;
+    const qOk = !q || p.name.toLowerCase().includes(q) || (p.note||'').toLowerCase().includes(q) || (p.style||'').toLowerCase().includes(q);
+    return catOk && qOk;
+  }).sort((a, b) => (b.rating||0) - (a.rating||0));
+}
+
+function setFilter(cat, el) {
+  selectedCat = cat;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  renderList();
+  renderMarkers();
+}
+
+function filterPlaces() { renderList(); renderMarkers(); }
+
+function starsHtml(r) {
+  if (!r) return '';
+  const full = Math.floor(r), half = r % 1 >= 0.5;
+  let s = '';
+  for (let i = 0; i < full; i++) s += '★';
+  if (half) s += '½';
+  return s;
+}
+
+function renderList() {
+  const list = document.getElementById('placesList');
+  const filtered = getFiltered();
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state"><div style="font-size:40px">🗺</div><p>暂无店铺<br><small>点右上角"添加"开始收藏</small></p></div>`;
+    document.getElementById('statsBar').textContent = '暂无数据';
+    return;
+  }
+  list.innerHTML = filtered.map(p => {
+    const cat = getCat(p.cat);
+    const myS = p.myScore ? `<span style="color:#d4a84b">我:${'★'.repeat(p.myScore)}</span> ` : '';
+    return `<div class="place-item ${p.id === activeId ? 'active' : ''}" onclick="openDetail('${p.id}')">
+      <div class="place-item-header">
+        <span class="place-cat-dot" style="background:${cat.color}"></span>
+        <span class="place-name">${p.name}</span>
+        <span class="place-rating">${p.rating ? p.rating + ' ' + starsHtml(p.rating) : ''}</span>
+      </div>
+      <div class="place-meta">
+        <span>${cat.icon} ${cat.name}</span>
+        ${p.price ? `<span class="price-tag">${p.price}</span>` : ''}
+        ${p.style ? `<span>${p.style}</span>` : ''}
+        ${myS}
+      </div>
+      ${p.note ? `<div class="place-note">📝 ${p.note}</div>` : ''}
+    </div>`;
+  }).join('');
+  document.getElementById('statsBar').textContent = `显示 ${filtered.length} / ${places.length} 家店铺`;
+}
+
+// ─── Filter bar ───────────────────────────────────────────────
+function renderFilterBar() {
+  const bar = document.getElementById('filterBar');
+  const counts = {};
+  places.forEach(p => counts[p.cat] = (counts[p.cat]||0) + 1);
+  const usedCats = categories.filter(c => c.id === 'all' || counts[c.id]);
+
+  bar.innerHTML = `<button class="filter-btn ${selectedCat==='all'?'active':''}" data-cat="all" onclick="setFilter('all',this)">全部 ${places.length}</button>`;
+  categories.forEach(c => {
+    if (!counts[c.id]) return;
+    bar.innerHTML += `<button class="filter-btn ${selectedCat===c.id?'active':''}" data-cat="${c.id}" onclick="setFilter('${c.id}',this)">
+      <span class="dot" style="background:${c.color}"></span>${c.icon}${c.name} ${counts[c.id]}
+    </button>`;
+  });
+}
+
+// ─── Detail panel ─────────────────────────────────────────────
+function openDetail(id) {
+  activeId = id;
+  const p = places.find(x => x.id === id);
+  if (!p) return;
+  const cat = getCat(p.cat);
+  document.getElementById('dCat').textContent = cat.icon + ' ' + cat.name;
+  document.getElementById('dCat').style.color = cat.color;
+  document.getElementById('dName').textContent = p.name;
+  document.getElementById('dStars').textContent = starsHtml(p.rating);
+  document.getElementById('dRating').textContent = p.rating ? `${p.rating} / 5` : '暂无评分';
+  document.getElementById('dPrice').textContent = p.price || '未知';
+  document.getElementById('dStyle').textContent = p.style || '—';
+  document.getElementById('dAddr').textContent = p.address || '—';
+  document.getElementById('dNote').value = p.note || '';
+  renderMyScore(p.myScore || 0);
+  document.getElementById('detailPanel').classList.add('open');
+  renderList();
+
+  if (p.lat && p.lng && markers[id]) {
+    map.panTo([p.lat, p.lng]);
+    markers[id].openPopup();
+  }
+}
+
+function closeDetail() {
+  activeId = null;
+  document.getElementById('detailPanel').classList.remove('open');
+  renderList();
+}
+
+function saveNote() {
+  const p = places.find(x => x.id === activeId);
+  if (p) { p.note = document.getElementById('dNote').value; save(); renderList(); }
+}
+
+function renderMyScore(score) {
+  document.querySelectorAll('.score-star').forEach(s => {
+    s.classList.toggle('lit', parseInt(s.dataset.v) <= score);
+  });
+}
+
+function setMyScore(v) {
+  const p = places.find(x => x.id === activeId);
+  if (!p) return;
+  p.myScore = p.myScore === v ? 0 : v;
+  renderMyScore(p.myScore);
+  save(); renderList();
+}
+
+function deletePlace() {
+  if (!confirm('确定删除这家店铺？')) return;
+  if (markers[activeId]) map.removeLayer(markers[activeId]);
+  delete markers[activeId];
+  places = places.filter(p => p.id !== activeId);
+  save(); closeDetail(); renderList(); renderFilterBar();
+}
+
+function editPlace() {
+  const p = places.find(x => x.id === activeId);
+  if (!p) return;
+  openAddModal();
+  setTimeout(() => {
+    document.getElementById('modalTitle').textContent = '编辑店铺';
+    document.getElementById('editId').value = p.id;
+    document.getElementById('fName').value = p.name || '';
+    document.getElementById('fRating').value = p.rating || '';
+    document.getElementById('fPrice').value = p.price || '';
+    document.getElementById('fStyle').value = p.style || '';
+    document.getElementById('fAddr').value = p.address || '';
+    document.getElementById('fNote').value = p.note || '';
+    pendingLat = p.lat; pendingLng = p.lng;
+    if (p.lat) {
+      document.getElementById('pickMapInfo').style.display = 'block';
+      document.getElementById('pickMapInfo').textContent = `✓ 已选: ${p.lat}, ${p.lng}`;
+    }
+    selectCat(p.cat);
+  }, 50);
+}
+
+// ─── Add/Edit modal ───────────────────────────────────────────
+let selectedCatInModal = 'restaurant';
+
+function openAddModal(keepLocation) {
+  if (!keepLocation) { pendingLat = null; pendingLng = null; }
+  document.getElementById('modalTitle').textContent = '添加新店铺';
+  document.getElementById('editId').value = '';
+  document.getElementById('fName').value = '';
+  document.getElementById('fRating').value = '';
+  document.getElementById('fPrice').value = '';
+  document.getElementById('fStyle').value = '';
+  document.getElementById('fAddr').value = '';
+  document.getElementById('fNote').value = '';
+  document.getElementById('customCatName').value = '';
+  document.getElementById('customCatGroup').style.display = 'none';
+  if (!keepLocation) {
+    document.getElementById('pickMapInfo').style.display = 'none';
+    document.getElementById('pickMapInfo').textContent = '';
+  } else {
+    document.getElementById('pickMapInfo').style.display = 'block';
+  }
+
+  renderCatGrid();
+  selectCat('restaurant');
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function renderCatGrid() {
+  const grid = document.getElementById('catGrid');
+  grid.innerHTML = categories.map(c =>
+    `<div class="cat-opt ${c.id === selectedCatInModal ? 'selected' : ''}" onclick="selectCat('${c.id}')">
+      <span class="cat-icon">${c.icon}</span>${c.name}
+    </div>`
+  ).join('');
+}
+
+function selectCat(id) {
+  selectedCatInModal = id;
+  document.querySelectorAll('.cat-opt').forEach((el, i) => {
+    el.classList.toggle('selected', categories[i].id === id);
+  });
+  document.getElementById('customCatGroup').style.display = id === 'custom' ? 'block' : 'none';
+}
+
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modalOverlay')) return;
+  document.getElementById('modalOverlay').classList.remove('open');
+  if (isPicking) stopPickLocation();
+}
+
+function savePlace() {
+  const name = document.getElementById('fName').value.trim();
+  if (!name) { alert('请填写店名'); return; }
+
+  let catId = selectedCatInModal;
+  if (catId === 'custom') {
+    const customName = document.getElementById('customCatName').value.trim();
+    if (!customName) { alert('请输入自定义分类名称'); return; }
+    // Check if exists
+    const existing = categories.find(c => c.name === customName);
+    if (existing) { catId = existing.id; }
+    else {
+      const newCat = {
+        id: 'cat_' + Date.now(),
+        name: customName,
+        icon: '📌',
+        color: '#' + Math.floor(Math.random()*0xaaaaaa+0x444444).toString(16)
+      };
+      categories.push(newCat);
+      localStorage.setItem('ryd_cats', JSON.stringify(categories));
+      catId = newCat.id;
+    }
+  }
+
+  const editId = document.getElementById('editId').value;
+  const data = {
+    id: editId || 'p_' + Date.now(),
+    name,
+    cat: catId,
+    rating: parseFloat(document.getElementById('fRating').value) || null,
+    price: document.getElementById('fPrice').value,
+    style: document.getElementById('fStyle').value.trim(),
+    address: document.getElementById('fAddr').value.trim(),
+    note: document.getElementById('fNote').value.trim(),
+    lat: pendingLat ? parseFloat(pendingLat) : null,
+    lng: pendingLng ? parseFloat(pendingLng) : null,
+    myScore: 0,
+    createdAt: editId ? (places.find(p=>p.id===editId)||{}).createdAt : new Date().toISOString()
+  };
+
+  if (editId) {
+    const idx = places.findIndex(p => p.id === editId);
+    if (idx > -1) { data.myScore = places[idx].myScore || 0; places[idx] = data; }
+  } else {
+    places.push(data);
+  }
+
+  save();
+  document.getElementById('modalOverlay').classList.remove('open');
+  renderAll();
+  if (data.lat && data.lng) openDetail(data.id);
+}
+
+// ─── Location picking ─────────────────────────────────────────
+function startPickLocation() {
+  document.getElementById('modalOverlay').classList.remove('open');
+  document.body.classList.add('picking');
+  isPicking = true;
+}
+
+function stopPickLocation() {
+  document.body.classList.remove('picking');
+  isPicking = false;
+}
+
+// ─── Data persistence ─────────────────────────────────────────
+function save() {
+  localStorage.setItem('ryd_places', JSON.stringify(places));
+}
+
+function renderAll() {
+  renderFilterBar();
+  renderList();
+  renderMarkers();
+}
+
+// ─── Export / Import ──────────────────────────────────────────
+function exportData() {
+  const data = { places, categories, exportedAt: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `利雅得探店_${new Date().toLocaleDateString('zh')}.json`;
+  a.click();
+}
+
+function importData() { document.getElementById('importFile').click(); }
+
+function handleImport(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (data.places) {
+        if (confirm(`导入 ${data.places.length} 家店铺？（将合并到现有数据）`)) {
+          const existingIds = new Set(places.map(p => p.id));
+          data.places.forEach(p => { if (!existingIds.has(p.id)) places.push(p); });
+          if (data.categories) {
+            const existCatIds = new Set(categories.map(c => c.id));
+            data.categories.forEach(c => { if (!existCatIds.has(c.id)) categories.push(c); });
+            localStorage.setItem('ryd_cats', JSON.stringify(categories));
+          }
+          save(); renderAll();
+          alert('导入成功！');
+        }
+      }
+    } catch { alert('文件格式错误'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+// ─── Seed data ────────────────────────────────────────────────
+function seedData() {
+  if (places.length > 0) return;
+  places = [
+    { id:'s1', name:'Najd Village', cat:'restaurant', rating:4.5, price:'＄＄＄', style:'地道沙特菜', address:'Olaya District', note:'传统沙特餐厅，装修很有氛围感', lat:24.6978, lng:46.6828, myScore:0, createdAt:new Date().toISOString() },
+    { id:'s2', name:'Bateel Boutique', cat:'chocolate', rating:4.7, price:'＄＄＄＄', style:'高端椰枣巧克力', address:'Kingdom Centre Mall', note:'椰枣巧克力超好吃，送礼首选', lat:24.6914, lng:46.6836, myScore:5, createdAt:new Date().toISOString() },
+    { id:'s3', name:'Layali Al Helwa', cat:'hookah', rating:4.3, price:'＄＄', style:'休闲水烟吧', address:'Al Hamra District', note:'环境不错，水烟种类多', lat:24.7058, lng:46.6752, myScore:0, createdAt:new Date().toISOString() },
+    { id:'s4', name:'Coincasa Café', cat:'cafe', rating:4.6, price:'＄＄', style:'精品咖啡', address:'Al Nakheel', note:'拿铁很棒，有好位置可以工作', lat:24.7134, lng:46.6921, myScore:4, createdAt:new Date().toISOString() },
+    { id:'s5', name:'3BD Sweets', cat:'dessert', rating:4.4, price:'＄', style:'沙特甜品', address:'Al Malqa', note:'Kunafa是招牌，营业到凌晨', lat:24.7221, lng:46.6598, myScore:0, createdAt:new Date().toISOString() },
+  ];
+  save();
+}
+
+// ─── Boot ─────────────────────────────────────────────────────
+initMap();
+seedData();
+renderAll();
+</script>
+</body>
+</html>
