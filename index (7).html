@@ -1,0 +1,1737 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>利雅得探店地图</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- 云端同步用（可选）。不填配置时不会发请求。 -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- 解析从 Google 地图导出的 CSV 文件用 -->
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f7f5f0; color: #1a1a1a; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Top bar */
+  .topbar { background: #1a1a1a; color: #fff; padding: 0 16px; height: 52px; display: flex; align-items: center; gap: 12px; z-index: 1000; flex-shrink: 0; }
+  .topbar h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.3px; white-space: nowrap; }
+  .topbar-sep { width: 1px; height: 20px; background: #333; }
+  .search-box { flex: 1; max-width: 280px; position: relative; }
+  .search-box input { width: 100%; background: #2a2a2a; border: none; border-radius: 8px; padding: 7px 12px 7px 32px; color: #fff; font-size: 13px; outline: none; }
+  .search-box input::placeholder { color: #666; }
+  .search-box svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); opacity: 0.5; }
+  .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .cloud-badge { font-size: 11px; padding: 4px 8px; border-radius: 6px; background: #2a2a2a; color: #888; white-space: nowrap; }
+  .cloud-badge.on { background: #1f3a2e; color: #6fd49a; }
+  .btn { padding: 6px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .btn-primary { background: #d4a84b; color: #1a1a1a; }
+  .btn-primary:hover { background: #c49a3c; }
+  .btn-ghost { background: #2a2a2a; color: #ccc; }
+  .btn-ghost:hover { background: #333; color: #fff; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+  /* Layout */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar { width: 340px; background: #fff; border-right: 1px solid #e8e4dc; display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; z-index: 10; }
+  .sidebar-filters { padding: 12px; border-bottom: 1px solid #f0ece4; display: flex; flex-wrap: wrap; gap: 6px; }
+  .filter-btn { padding: 5px 12px; border-radius: 20px; border: 1.5px solid #e0dbd0; background: #fff; font-size: 12px; cursor: pointer; transition: all 0.15s; color: #555; }
+  .filter-btn:hover { border-color: #c49a3c; color: #c49a3c; }
+  .filter-btn.active { background: #1a1a1a; border-color: #1a1a1a; color: #fff; }
+  .filter-btn .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+  .places-list { flex: 1; overflow-y: auto; }
+  .place-item { padding: 14px 16px; border-bottom: 1px solid #f5f2ec; cursor: pointer; transition: background 0.1s; }
+  .place-item:hover { background: #faf8f4; }
+  .place-item.active { background: #fff8ed; border-left: 3px solid #d4a84b; }
+  .place-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .place-cat-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .place-name { font-size: 14px; font-weight: 600; flex: 1; }
+  .place-rating { font-size: 12px; color: #c49a3c; font-weight: 600; }
+  .place-meta { font-size: 12px; color: #888; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .price-tag { background: #f0ece4; padding: 2px 7px; border-radius: 4px; color: #666; }
+  .review-pill { background: #fff3d6; color: #a8801f; padding: 2px 7px; border-radius: 4px; font-weight: 600; }
+  .place-note { font-size: 12px; color: #999; margin-top: 4px; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stars { color: #d4a84b; font-size: 11px; }
+  .empty-state { padding: 40px 20px; text-align: center; color: #aaa; }
+  .empty-state svg { margin-bottom: 12px; opacity: 0.3; }
+
+  /* Map */
+  #map { flex: 1; z-index: 1; }
+  .map-fab { position: absolute; z-index: 600; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .map-fab button { width: 42px; height: 42px; border-radius: 50%; border: none; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.18); cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; }
+  .map-fab button:hover { background: #fff8ed; }
+
+  /* Detail panel */
+  .detail-panel { position: absolute; right: 16px; bottom: 16px; width: 340px; max-height: calc(100% - 32px); overflow-y: auto; background: #fff; border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); z-index: 700; padding: 20px; display: none; }
+  .detail-panel.open { display: block; }
+  .detail-close { position: absolute; right: 12px; top: 12px; width: 28px; height: 28px; border-radius: 50%; background: #f5f2ec; border: none; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; color: #666; }
+  .detail-cat { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .detail-name { font-size: 20px; font-weight: 700; margin-bottom: 8px; line-height: 1.2; padding-right: 30px; }
+  .detail-rating-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .detail-stars { color: #d4a84b; font-size: 15px; }
+  .detail-rating-num { font-size: 14px; font-weight: 600; }
+  .community-tag { font-size: 12px; background: #fff3d6; color: #a8801f; padding: 3px 9px; border-radius: 20px; font-weight: 600; }
+  .detail-info { display: grid; gap: 8px; margin-bottom: 14px; }
+  .detail-info-row { display: flex; gap: 8px; font-size: 13px; }
+  .detail-info-label { color: #999; width: 48px; flex-shrink: 0; }
+  .detail-info-val { color: #1a1a1a; }
+  .detail-link { font-size: 13px; color: #c49a3c; text-decoration: none; font-weight: 600; }
+  .detail-note-area { background: #faf8f4; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+  .detail-note-area textarea { width: 100%; background: transparent; border: none; font-size: 13px; color: #555; resize: none; outline: none; font-family: inherit; min-height: 50px; }
+  .detail-note-area label { font-size: 11px; color: #bbb; display: block; margin-bottom: 4px; font-weight: 500; }
+  .detail-actions { display: flex; gap: 8px; }
+  .btn-danger { background: #fff0f0; color: #cc3333; border: none; }
+  .btn-danger:hover { background: #ffe0e0; }
+
+  /* Reviews */
+  .reviews-section { border-top: 1px solid #f0ece4; margin-top: 4px; padding-top: 14px; margin-bottom: 14px; }
+  .reviews-section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: #999; margin-bottom: 10px; }
+  .review-card { background: #faf8f4; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .review-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .review-author { font-size: 13px; font-weight: 600; }
+  .review-stars { color: #d4a84b; font-size: 12px; }
+  .review-date { font-size: 11px; color: #bbb; margin-left: auto; }
+  .review-text { font-size: 13px; color: #555; line-height: 1.45; white-space: pre-wrap; }
+  .review-del { font-size: 11px; color: #c99; cursor: pointer; margin-left: 8px; }
+  .no-reviews { font-size: 12px; color: #bbb; padding: 4px 0 10px; }
+
+  /* Photos */
+  .photo-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .photo-thumb-wrap { position: relative; width: 64px; height: 64px; flex-shrink: 0; }
+  .photo-thumb { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; cursor: pointer; display: block; }
+  .photo-remove { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #1a1a1a; color: #fff; font-size: 12px; line-height: 18px; text-align: center; cursor: pointer; }
+  .photo-add-tile { width: 64px; height: 64px; border-radius: 10px; border: 1.5px dashed #c8c0b0; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #bbb; cursor: pointer; flex-shrink: 0; }
+  .photo-add-tile:hover { border-color: #d4a84b; color: #c49a3c; }
+  .detail-photos { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 14px; padding-bottom: 2px; }
+  .review-photo-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .review-photo { width: 100%; max-width: 160px; border-radius: 8px; margin-top: 6px; cursor: pointer; display: block; }
+  .place-item-row { display: flex; gap: 10px; align-items: flex-start; }
+  .place-thumb { width: 46px; height: 46px; border-radius: 10px; object-fit: cover; flex-shrink: 0; background: #eee; }
+  .place-item-body { flex: 1; min-width: 0; }
+  .lightbox-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 4000; display: none; align-items: center; justify-content: center; padding: 24px; }
+  .lightbox-overlay.open { display: flex; }
+  .lightbox-overlay img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+  .add-review-box { background: #fff8ed; border: 1.5px solid #f0e2c4; border-radius: 12px; padding: 12px; }
+  .add-review-box .star-pick { font-size: 22px; cursor: pointer; color: #ddd; line-height: 1; }
+  .add-review-box .star-pick.lit { color: #d4a84b; }
+  .add-review-box input, .add-review-box textarea { width: 100%; padding: 8px 10px; border: 1px solid #e8e4dc; border-radius: 8px; font-size: 13px; font-family: inherit; margin-top: 8px; outline: none; background: #fff; }
+  .add-review-box textarea { resize: vertical; min-height: 50px; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 2000; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: #fff; border-radius: 20px; padding: 28px; width: 100%; max-width: 460px; max-height: 90vh; overflow-y: auto; }
+  .modal h2 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+  .modal h2 small { font-size: 12px; font-weight: 500; color: #aaa; }
+  .form-group { margin-bottom: 16px; }
+  .form-group > label { display: block; font-size: 12px; font-weight: 600; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 14px; border: 1.5px solid #e8e4dc; border-radius: 10px; font-size: 14px; outline: none; font-family: inherit; transition: border-color 0.15s; background: #faf8f4; }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: #d4a84b; background: #fff; }
+  .form-group textarea { resize: vertical; min-height: 70px; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .cat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .cat-opt { padding: 10px 4px; border: 1.5px solid #e8e4dc; border-radius: 10px; text-align: center; cursor: pointer; font-size: 11px; transition: all 0.15s; background: #faf8f4; }
+  .cat-opt:hover { border-color: #d4a84b; }
+  .cat-opt.selected { border-color: #1a1a1a; background: #1a1a1a; color: #fff; }
+  .cat-opt .cat-icon { font-size: 18px; display: block; margin-bottom: 4px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 24px; }
+  .modal-actions .btn { flex: 1; padding: 12px; font-size: 14px; border-radius: 12px; }
+  .btn-cancel { background: #f5f2ec; color: #555; border: none; }
+  .btn-cancel:hover { background: #ebe7df; }
+
+  /* Location tabs */
+  .loc-tabs { display: flex; gap: 4px; background: #f0ece4; padding: 4px; border-radius: 10px; margin-bottom: 10px; }
+  .loc-tab { flex: 1; text-align: center; padding: 7px 4px; font-size: 12px; border-radius: 7px; cursor: pointer; color: #777; transition: all 0.15s; }
+  .loc-tab.active { background: #fff; color: #1a1a1a; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .loc-pane { display: none; }
+  .loc-pane.active { display: block; }
+  .pick-map-btn { background: #f0ece4; border: 1.5px dashed #c8c0b0; border-radius: 10px; padding: 12px; width: 100%; font-size: 13px; color: #888; cursor: pointer; text-align: center; transition: all 0.15s; }
+  .pick-map-btn:hover { border-color: #d4a84b; color: #c49a3c; background: #fff8ed; }
+  .inline-row { display: flex; gap: 8px; }
+  .inline-row .btn { white-space: nowrap; }
+  .geo-results { margin-top: 8px; max-height: 150px; overflow-y: auto; }
+  .geo-result { padding: 8px 10px; border: 1px solid #eee; border-radius: 8px; font-size: 12px; cursor: pointer; margin-bottom: 6px; color: #555; }
+  .geo-result:hover { border-color: #d4a84b; background: #fff8ed; }
+  .pick-map-info { font-size: 12px; color: #2e9e5b; margin-top: 8px; font-weight: 600; display: none; }
+  .hint { font-size: 11px; color: #aaa; margin-top: 6px; line-height: 1.4; }
+
+  /* Picking mode */
+  body.picking #map { cursor: crosshair !important; }
+  .picking-banner { display: none; position: absolute; top: 60px; left: 50%; transform: translateX(-50%); background: #d4a84b; color: #1a1a1a; padding: 10px 20px; border-radius: 30px; font-size: 13px; font-weight: 600; z-index: 1500; box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
+  body.picking .picking-banner { display: block; }
+
+  /* Custom marker */
+  .map-marker { width: 32px; height: 32px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 2px solid rgba(255,255,255,0.85); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+  .map-marker span { transform: rotate(45deg); font-size: 14px; }
+
+  .places-list::-webkit-scrollbar, .detail-panel::-webkit-scrollbar { width: 4px; }
+  .places-list::-webkit-scrollbar-thumb, .detail-panel::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }
+
+  .stats-bar { padding: 8px 16px; border-top: 1px solid #f0ece4; font-size: 12px; color: #aaa; background: #faf8f4; flex-shrink: 0; }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); background: #1a1a1a; color: #fff; padding: 11px 20px; border-radius: 30px; font-size: 13px; z-index: 3000; opacity: 0; transition: all 0.25s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Bottom-sheet bits (only visible on phones) */
+  .sheet-handle { display: none; }
+  .sheet-tools { display: none; }
+
+  /* Map-center pin used while picking a location */
+  .pick-reticle { display: none; position: absolute; left: 50%; top: 50%; z-index: 650; pointer-events: none; transform: translate(-50%, -50%); }
+  body.picking .pick-reticle { display: block; }
+  .pick-reticle .pin { position: absolute; left: 50%; bottom: 0; transform: translate(-50%, -3px); font-size: 40px; line-height: 1; filter: drop-shadow(0 4px 4px rgba(0,0,0,0.35)); animation: pinDrop 0.3s ease; }
+  .pick-reticle .dot { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: #d4a84b; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.25); }
+  @keyframes pinDrop { from { transform: translate(-50%, -18px); opacity: 0; } to { transform: translate(-50%, -3px); opacity: 1; } }
+
+  /* Confirm bar while picking (works on phone + desktop) */
+  .pick-bar { display: none; position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); width: calc(100% - 32px); max-width: 400px; background: #fff; border-radius: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.22); padding: 12px 14px 14px; z-index: 1600; }
+  body.picking .pick-bar { display: block; }
+  .pick-bar-text { font-size: 12.5px; color: #555; text-align: center; margin-bottom: 10px; line-height: 1.5; }
+  .pick-bar-text b { color: #1a1a1a; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .pick-bar-actions { display: flex; gap: 10px; }
+  .pick-bar-actions .btn { flex: 1; padding: 11px; font-size: 14px; border-radius: 11px; }
+
+  /* Clear the screen while picking so the whole map is reachable */
+  body.picking .map-fab, body.picking .detail-panel { display: none !important; }
+
+  @media (max-width: 600px) {
+    /* Map fills the space under the top bar; the list floats as a bottom sheet */
+    .main { position: relative; display: block; }
+    #map { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+    .sidebar {
+      position: fixed; left: 0; right: 0; bottom: 0; width: 100%;
+      height: 86dvh; border: none; border-radius: 18px 18px 0 0;
+      box-shadow: 0 -6px 28px rgba(0,0,0,0.16);
+      z-index: 800; will-change: transform;
+      transform: translateY(calc(86dvh - 160px));
+      transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    body.picking .sidebar { transform: translateY(100%) !important; }
+
+    .sheet-handle { display: flex; align-items: center; justify-content: center; height: 26px; cursor: grab; flex-shrink: 0; touch-action: none; }
+    .sheet-handle span { width: 40px; height: 5px; border-radius: 3px; background: #d8d2c6; }
+    .sheet-tools { display: flex; align-items: center; gap: 8px; padding: 0 14px 10px; flex-shrink: 0; touch-action: none; }
+    .sheet-tools .cloud-badge { margin-right: auto; }
+
+    .sidebar-filters { padding: 10px 12px; }
+    .places-list { -webkit-overflow-scrolling: touch; }
+
+    /* Detail card becomes a bottom sheet too */
+    .detail-panel {
+      width: 100%; left: 0; right: 0; bottom: 0; top: auto;
+      border-radius: 18px 18px 0 0; max-height: 86dvh;
+      padding: 22px 18px calc(20px + env(safe-area-inset-bottom));
+      z-index: 1100; box-shadow: 0 -6px 28px rgba(0,0,0,0.2);
+      animation: sheetUp 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+    .map-fab { bottom: 176px; right: 14px; }
+    .map-fab button { width: 46px; height: 46px; }
+    body.detail-open .map-fab { display: none; }
+
+    /* Compact top bar: title + search + add */
+    .topbar { padding: 0 12px; gap: 8px; }
+    .topbar h1 { font-size: 15px; }
+    .topbar-sep { display: none; }
+    .search-box { flex: 1; max-width: none; }
+    .topbar .hide-mobile { display: none; }
+    #addBtn .btn-label { display: none; }
+    #addBtn { padding: 7px 13px; font-size: 16px; line-height: 1; }
+
+    /* Modal as a bottom sheet, easier to fill and scroll */
+    .modal-overlay { padding: 0; align-items: flex-end; }
+    .modal { max-width: none; border-radius: 18px 18px 0 0; padding: 22px 18px calc(20px + env(safe-area-inset-bottom)); max-height: 92dvh; }
+    .cat-grid { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .cat-opt { padding: 9px 2px; font-size: 10.5px; }
+    .cat-opt .cat-icon { font-size: 17px; }
+    .loc-tab { font-size: 11px; padding: 8px 2px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🗺 利雅得探店</h1>
+  <div class="topbar-sep"></div>
+  <div class="search-box">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input type="text" id="searchInput" placeholder="搜索店名、备注..." oninput="filterPlaces()">
+  </div>
+  <div class="topbar-actions">
+    <span class="cloud-badge hide-mobile" id="cloudBadge">本地存储</span>
+    <button class="btn btn-ghost btn-sm hide-mobile" onclick="exportData()">导出</button>
+    <button class="btn btn-ghost btn-sm hide-mobile" onclick="importData()">导入</button>
+    <button class="btn btn-primary" id="addBtn" onclick="openAddModal()">+<span class="btn-label"> 添加</span></button>
+  </div>
+</div>
+
+<div class="pick-bar" id="pickBar">
+  <div class="pick-bar-text" id="pickBarText">拖动地图，把图钉对准位置</div>
+  <div class="pick-bar-actions">
+    <button class="btn btn-cancel" onclick="cancelPickLocation()">取消</button>
+    <button class="btn btn-primary" onclick="confirmPickLocation()">用这个位置</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="sidebar" id="sidebar">
+    <div class="sheet-handle" id="sheetHandle"><span></span></div>
+    <div class="sheet-tools">
+      <span class="cloud-badge" id="cloudBadgeM">本地存储</span>
+      <button class="btn btn-ghost btn-sm" onclick="exportData()">导出</button>
+      <button class="btn btn-ghost btn-sm" onclick="importData()">导入文件</button>
+    </div>
+    <div class="sidebar-filters" id="filterBar"></div>
+    <div class="places-list" id="placesList"></div>
+    <div class="stats-bar" id="statsBar">加载中...</div>
+  </div>
+  <div id="map"></div>
+  <div class="map-fab">
+    <button title="定位到我附近" onclick="locateMe()">📍</button>
+  </div>
+</div>
+
+<!-- Detail panel -->
+<div class="detail-panel" id="detailPanel">
+  <button class="detail-close" onclick="closeDetail()">×</button>
+  <div class="detail-cat" id="dCat"></div>
+  <div class="detail-name" id="dName"></div>
+  <div class="detail-rating-row">
+    <span class="detail-stars" id="dStars"></span>
+    <span class="detail-rating-num" id="dRating"></span>
+    <span class="community-tag" id="dCommunity" style="display:none"></span>
+  </div>
+
+  <div class="detail-photos" id="dPhotos"></div>
+  <input type="file" id="detailPhotoInput" accept="image/*" multiple style="display:none" onchange="handleDetailPhotoFiles(event)">
+  <div class="detail-info">
+    <div class="detail-info-row"><span class="detail-info-label">价格</span><span class="detail-info-val" id="dPrice"></span></div>
+    <div class="detail-info-row"><span class="detail-info-label">风格</span><span class="detail-info-val" id="dStyle"></span></div>
+    <div class="detail-info-row"><span class="detail-info-label">地址</span><span class="detail-info-val" id="dAddr"></span></div>
+    <div class="detail-info-row"><span class="detail-info-label">导航</span><a class="detail-link" id="dNav" target="_blank">导航过去 →</a></div>
+  </div>
+
+  <div class="detail-note-area">
+    <label>个人备注（只有你自己看得到）</label>
+    <textarea id="dNote" placeholder="必点菜、停车建议、最佳时段..." onchange="saveNote()"></textarea>
+  </div>
+
+  <div class="reviews-section">
+    <h4 id="dReviewTitle">大家的评价</h4>
+    <div id="dReviewList"></div>
+    <div class="add-review-box">
+      <div>
+        <span class="star-pick" data-v="1" onclick="pickReviewStar(1)">★</span>
+        <span class="star-pick" data-v="2" onclick="pickReviewStar(2)">★</span>
+        <span class="star-pick" data-v="3" onclick="pickReviewStar(3)">★</span>
+        <span class="star-pick" data-v="4" onclick="pickReviewStar(4)">★</span>
+        <span class="star-pick" data-v="5" onclick="pickReviewStar(5)">★</span>
+      </div>
+      <input type="text" id="rvAuthor" placeholder="你的名字">
+      <textarea id="rvText" placeholder="说说你的感受、推荐菜、踩雷点..."></textarea>
+      <div class="review-photo-row">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('reviewPhotoInput').click()">📷 配图（可选）</button>
+        <span id="reviewPhotoPreviewWrap"></span>
+        <input type="file" id="reviewPhotoInput" accept="image/*" style="display:none" onchange="handleReviewPhotoSelect(event)">
+      </div>
+      <button class="btn btn-primary btn-sm" style="margin-top:8px;width:100%" onclick="submitReview()">发布评价</button>
+    </div>
+  </div>
+
+  <div class="detail-actions">
+    <button class="btn btn-ghost btn-sm" onclick="editPlace()" style="flex:1">编辑</button>
+    <button class="btn btn-danger btn-sm" onclick="deletePlace()" style="flex:1">删除</button>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h2 id="modalTitle">添加新店铺</h2>
+    <input type="hidden" id="editId">
+
+    <div class="form-group">
+      <label>分类</label>
+      <div class="cat-grid" id="catGrid"></div>
+    </div>
+
+    <div class="form-group" id="customCatGroup" style="display:none">
+      <label>自定义分类名称</label>
+      <input type="text" id="customCatName" placeholder="例如：书店、健身房...">
+    </div>
+
+    <div class="form-group">
+      <label>店名</label>
+      <input type="text" id="fName" placeholder="店铺名称">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Google评分 (0-5)</label>
+        <input type="number" id="fRating" min="0" max="5" step="0.1" placeholder="4.5">
+      </div>
+      <div class="form-group">
+        <label>价格区间</label>
+        <select id="fPrice">
+          <option value="">不知道</option>
+          <option value="＄">＄ 便宜</option>
+          <option value="＄＄">＄＄ 中等</option>
+          <option value="＄＄＄">＄＄＄ 偏贵</option>
+          <option value="＄＄＄＄">＄＄＄＄ 高档</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>风格 / 特色</label>
+      <input type="text" id="fStyle" placeholder="例如：地道沙特菜、网红打卡、安静氛围...">
+    </div>
+
+    <div class="form-group">
+      <label>地址（可选）</label>
+      <input type="text" id="fAddr" placeholder="地址或区域描述">
+    </div>
+
+    <!-- 多种定位方式 -->
+    <div class="form-group">
+      <label>地图位置 <small style="text-transform:none;letter-spacing:0;color:#bbb;">— 选一种方式</small></label>
+      <div class="loc-tabs">
+        <div class="loc-tab active" data-pane="paneMap" onclick="switchLocTab('paneMap',this)">地图选点</div>
+        <div class="loc-tab" data-pane="paneCoord" onclick="switchLocTab('paneCoord',this)">输入坐标</div>
+        <div class="loc-tab" data-pane="paneLink" onclick="switchLocTab('paneLink',this)">谷歌链接</div>
+        <div class="loc-tab" data-pane="paneSearch" onclick="switchLocTab('paneSearch',this)">搜地址</div>
+      </div>
+
+      <div class="loc-pane active" id="paneMap">
+        <button class="pick-map-btn" onclick="startPickLocation()">📍 打开地图，拖动选点</button>
+        <div class="hint">点击后地图会放大，拖动地图让中间的图钉对准位置，再点“用这个位置”。</div>
+      </div>
+
+      <div class="loc-pane" id="paneCoord">
+        <div class="inline-row">
+          <input type="text" id="coordInput" placeholder="粘贴或输入：24.711, 46.674">
+          <button class="btn btn-primary btn-sm" onclick="applyCoordInput()">应用</button>
+        </div>
+        <div class="hint">支持 “纬度, 经度” 格式。在 Google 地图上右键任意点即可复制坐标。</div>
+      </div>
+
+      <div class="loc-pane" id="paneLink">
+        <textarea id="linkInput" placeholder="粘贴 Google 地图链接：单个店铺 或 整个清单（maps.app.goo.gl 短链接也行）" style="width:100%;padding:10px;border:1.5px solid #e8e4dc;border-radius:10px;font-size:13px;font-family:inherit;min-height:60px;background:#faf8f4;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="applyLinkInput(this)">单个店铺：提取信息</button>
+          <button class="btn btn-ghost btn-sm" onclick="applyListLink(this)">整个清单：批量导入（实验）</button>
+        </div>
+        <div class="hint">单个店铺：自动读取位置、店名并猜分类。<br>整个清单：粘贴对方分享的清单链接，尝试一次性抓出里面所有店铺(谷歌有限制,不保证每次成功;抓不到就用「清单转 CSV」工具导出后点上方「导入」)。</div>
+      </div>
+
+      <div class="loc-pane" id="paneSearch">
+        <div class="inline-row">
+          <input type="text" id="geoInput" placeholder="输入店名或地址，如 Bateel Riyadh" onkeydown="if(event.key==='Enter'){event.preventDefault();runGeocode();}">
+          <button class="btn btn-primary btn-sm" onclick="runGeocode()">搜索</button>
+        </div>
+        <div class="geo-results" id="geoResults"></div>
+        <div class="hint">用 OpenStreetMap 免费地理编码，结果点一下即可定位。</div>
+      </div>
+
+      <div class="pick-map-info" id="pickMapInfo"></div>
+    </div>
+
+    <div class="form-group">
+      <label>店铺照片 <small style="text-transform:none;letter-spacing:0;color:#bbb;">— 最多 6 张，可选</small></label>
+      <div class="photo-grid" id="photoGrid"></div>
+      <button type="button" class="pick-map-btn" style="margin-top:8px" onclick="document.getElementById('photoInput').click()">📷 选择图片上传</button>
+      <input type="file" id="photoInput" accept="image/*" multiple style="display:none" onchange="handlePhotoSelect(event)">
+    </div>
+
+    <div class="form-group">
+      <label>个人备注</label>
+      <textarea id="fNote" placeholder="必点菜、停车建议、最佳时段..."></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-cancel" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="savePlace()">保存</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="importFile" accept=".json,.csv" style="display:none" onchange="handleImport(event)">
+<div class="toast" id="toast"></div>
+
+<!-- Google 地图批量导入：预览 / 选分类 / 进度 -->
+<div class="modal-overlay" id="importPreviewOverlay">
+  <div class="modal" onclick="event.stopPropagation()">
+    <h2>批量导入</h2>
+    <p class="hint" id="ipSummary" style="margin-bottom:14px;font-size:13px;"></p>
+    <div class="form-group">
+      <label>默认分类（自动识别不出时用）</label>
+      <select id="ipCatSelect"></select>
+    </div>
+    <p class="hint" id="ipProgress" style="display:none;margin-top:10px;"></p>
+    <div class="modal-actions">
+      <button class="btn btn-cancel" id="ipCancelBtn" onclick="closeImportPreview()">取消</button>
+      <button class="btn btn-primary" id="ipConfirmBtn" onclick="confirmGoogleImport()">开始导入并自动定位</button>
+    </div>
+  </div>
+</div>
+
+<div class="lightbox-overlay" id="lightboxOverlay" onclick="closeLightbox()">
+  <img id="lightboxImg" src="" onclick="event.stopPropagation()">
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════
+//  云端同步配置（可选）
+//  留空 = 纯本地存储（数据只在这台设备）。
+//  填上 Supabase 的 URL 和 anon key = 所有人共享同一份数据和评价。
+//  建表 SQL 见随附的「部署说明」。
+// ════════════════════════════════════════════════════════════════
+const CLOUD = {
+  url: 'https://kqviesdwayzjuxjcpxgv.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtxdmllc2R3YXl6anV4amNweGd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1OTEzMzAsImV4cCI6MjA5NzE2NzMzMH0.V7F_LBNCUwHPAu0EWbg7Kd85wJOMGXGIOm0STMZ-h7A'
+};
+
+// ─── Categories ───────────────────────────────────────────────
+const DEFAULT_CATS = [
+  { id: 'restaurant',    name: '餐厅',   icon: '🍽', color: '#e8472a' },
+  { id: 'cafe',          name: '咖啡',   icon: '☕', color: '#c08040' },
+  { id: 'dessert',       name: '甜品',   icon: '🧁', color: '#e8799a' },
+  { id: 'chocolate',     name: '椰枣巧克力', icon: '🍫', color: '#6b3a2a' },
+  { id: 'hookah',        name: '水烟',   icon: '💨', color: '#7b5ea7' },
+  { id: 'entertainment', name: '娱乐',   icon: '🎡', color: '#2f8fd0' },
+  { id: 'other',         name: '其他',   icon: '📍', color: '#5a8a5a' },
+  { id: 'custom',        name: '自定义', icon: '✨', color: '#888' },
+];
+
+let categories = JSON.parse(localStorage.getItem('ryd_cats') || 'null') || DEFAULT_CATS;
+let places = [];
+let reviews = [];               // {id, placeId, author, score, comment, createdAt}
+let selectedCat = 'all';
+let activeId = null;
+let pendingLat = null, pendingLng = null;
+let isPicking = false;
+let markers = {};
+let map;
+let pickPreview = null;
+let pendingReviewScore = 0;
+let cloudEnabled = false;
+let sb = null;
+
+// ─── Data layer (local OR cloud) ──────────────────────────────
+const DB = {
+  async init() {
+    if (CLOUD.url && CLOUD.key && window.supabase) {
+      try { sb = window.supabase.createClient(CLOUD.url, CLOUD.key); cloudEnabled = true; }
+      catch (e) { cloudEnabled = false; }
+    }
+  },
+  async loadAll() {
+    if (cloudEnabled) {
+      const [p, r] = await Promise.all([
+        sb.from('places').select('*').order('created_at', { ascending: true }),
+        sb.from('reviews').select('*').order('created_at', { ascending: true })
+      ]);
+      places  = (p.data || []).map(rowToPlace);
+      reviews = (r.data || []).map(rowToReview);
+    } else {
+      places  = JSON.parse(localStorage.getItem('ryd_places')  || '[]');
+      reviews = JSON.parse(localStorage.getItem('ryd_reviews') || '[]');
+    }
+  },
+  async upsertPlace(p) {
+    if (cloudEnabled) { await sb.from('places').upsert(placeToRow(p)); }
+    else { trySaveLocal('ryd_places', places); }
+  },
+  async removePlace(id) {
+    if (cloudEnabled) {
+      await sb.from('reviews').delete().eq('place_id', id);
+      await sb.from('places').delete().eq('id', id);
+    } else {
+      trySaveLocal('ryd_places', places);
+      trySaveLocal('ryd_reviews', reviews);
+    }
+  },
+  async addReview(rv) {
+    if (cloudEnabled) { await sb.from('reviews').insert(reviewToRow(rv)); }
+    else { trySaveLocal('ryd_reviews', reviews); }
+  },
+  async removeReview(id) {
+    if (cloudEnabled) { await sb.from('reviews').delete().eq('id', id); }
+    else { trySaveLocal('ryd_reviews', reviews); }
+  },
+  saveNoteLocal() { trySaveLocal('ryd_places', places); }
+};
+// snake_case <-> camelCase for Supabase columns
+const placeToRow  = p  => ({ id:p.id, name:p.name, cat:p.cat, rating:p.rating, price:p.price, style:p.style, address:p.address, lat:p.lat, lng:p.lng, photos:p.photos||[], created_at:p.createdAt });
+const rowToPlace  = r  => ({ id:r.id, name:r.name, cat:r.cat, rating:r.rating, price:r.price, style:r.style, address:r.address, lat:r.lat, lng:r.lng, photos: Array.isArray(r.photos) ? r.photos : [], createdAt:r.created_at, note: JSON.parse(localStorage.getItem('ryd_notes')||'{}')[r.id] || '' });
+const reviewToRow = rv => ({ id:rv.id, place_id:rv.placeId, author:rv.author, score:rv.score, comment:rv.comment, photo:rv.photo||null, created_at:rv.createdAt });
+const rowToReview = r  => ({ id:r.id, placeId:r.place_id, author:r.author, score:r.score, comment:r.comment, photo:r.photo||null, createdAt:r.created_at });
+
+// 本地存储有容量上限（一般 5-10MB），照片较多时可能超出
+function trySaveLocal(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+  catch (e) { toast('本地存储空间不足，建议精简照片或开启云端共享（见部署说明）'); return false; }
+}
+
+// ─── Photos (compress client-side, stored as base64) ──────────
+const MAX_PHOTOS_PER_PLACE = 6;
+function compressImage(file, maxDim = 1024, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type || !file.type.startsWith('image/')) { reject(new Error('not an image')); return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w >= h) { h = Math.round(h * maxDim / w); w = maxDim; }
+          else { w = Math.round(w * maxDim / h); h = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => reject(new Error('image decode failed'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('file read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+function openLightbox(src) {
+  document.getElementById('lightboxImg').src = src;
+  document.getElementById('lightboxOverlay').classList.add('open');
+}
+function closeLightbox() { document.getElementById('lightboxOverlay').classList.remove('open'); }
+
+// 添加/编辑表单里待上传的照片
+let pendingPhotos = [];
+async function handlePhotoSelect(ev) {
+  const files = Array.from(ev.target.files || []);
+  ev.target.value = '';
+  const room = MAX_PHOTOS_PER_PLACE - pendingPhotos.length;
+  if (room <= 0) { toast(`最多 ${MAX_PHOTOS_PER_PLACE} 张照片`); return; }
+  for (const f of files.slice(0, room)) {
+    try { pendingPhotos.push(await compressImage(f)); }
+    catch (e) { toast('这张图片处理失败，跳过'); }
+  }
+  renderPhotoGrid();
+}
+function removePendingPhoto(i) { pendingPhotos.splice(i, 1); renderPhotoGrid(); }
+function renderPhotoGrid() {
+  const grid = document.getElementById('photoGrid');
+  if (!grid) return;
+  grid.innerHTML = pendingPhotos.map((src, i) => `
+    <div class="photo-thumb-wrap">
+      <img src="${src}" class="photo-thumb" onclick="openLightbox(this.src)">
+      <span class="photo-remove" onclick="event.stopPropagation();removePendingPhoto(${i})">×</span>
+    </div>`).join('') + (pendingPhotos.length < MAX_PHOTOS_PER_PLACE
+      ? `<div class="photo-add-tile" onclick="document.getElementById('photoInput').click()">+</div>` : '');
+}
+
+// 详情面板：给已收藏的店铺直接加/删照片，不必进入编辑
+let detailPhotoBusy = false;
+function renderDetailPhotos(p) {
+  const wrap = document.getElementById('dPhotos');
+  const photos = p.photos || [];
+  wrap.innerHTML = photos.map((src, i) => `
+    <div class="photo-thumb-wrap">
+      <img src="${src}" class="photo-thumb" onclick="openLightbox(this.src)">
+      <span class="photo-remove" onclick="event.stopPropagation();removePlacePhoto(${i})">×</span>
+    </div>`).join('') + (photos.length < MAX_PHOTOS_PER_PLACE
+      ? `<div class="photo-add-tile" onclick="document.getElementById('detailPhotoInput').click()">📷</div>` : '');
+}
+async function handleDetailPhotoFiles(ev) {
+  const files = Array.from(ev.target.files || []);
+  ev.target.value = '';
+  if (!activeId || detailPhotoBusy) return;
+  const p = places.find(x => x.id === activeId);
+  if (!p) return;
+  p.photos = p.photos || [];
+  const room = MAX_PHOTOS_PER_PLACE - p.photos.length;
+  if (room <= 0) { toast(`最多 ${MAX_PHOTOS_PER_PLACE} 张照片`); return; }
+  detailPhotoBusy = true;
+  for (const f of files.slice(0, room)) {
+    try { p.photos.push(await compressImage(f)); }
+    catch (e) { toast('这张图片处理失败，跳过'); }
+  }
+  await DB.upsertPlace(p);
+  renderDetailPhotos(p); renderList();
+  detailPhotoBusy = false;
+  toast('照片已添加 ✓');
+}
+async function removePlacePhoto(i) {
+  const p = places.find(x => x.id === activeId);
+  if (!p || !p.photos) return;
+  p.photos.splice(i, 1);
+  await DB.upsertPlace(p);
+  renderDetailPhotos(p); renderList();
+}
+
+// 评价配图
+let pendingReviewPhoto = null;
+async function handleReviewPhotoSelect(ev) {
+  const file = (ev.target.files || [])[0];
+  ev.target.value = '';
+  if (!file) return;
+  try { pendingReviewPhoto = await compressImage(file, 900, 0.65); }
+  catch (e) { toast('这张图片处理失败'); return; }
+  renderReviewPhotoPreview();
+}
+function removeReviewPhoto() { pendingReviewPhoto = null; renderReviewPhotoPreview(); }
+function renderReviewPhotoPreview() {
+  const wrap = document.getElementById('reviewPhotoPreviewWrap');
+  if (!wrap) return;
+  wrap.innerHTML = pendingReviewPhoto
+    ? `<span class="photo-thumb-wrap" style="display:inline-block;vertical-align:middle;width:32px;height:32px">
+         <img src="${pendingReviewPhoto}" class="photo-thumb" style="width:32px;height:32px" onclick="openLightbox(this.src)">
+         <span class="photo-remove" onclick="event.stopPropagation();removeReviewPhoto()">×</span>
+       </span>` : '';
+}
+
+// ─── Map init ─────────────────────────────────────────────────
+function initMap() {
+  map = L.map('map', { zoomControl: true }).setView([24.71, 46.675], 12);
+
+  // 多语言底图：默认 Voyager（拉丁字母/英文标注更友好），可在右上角切换
+  const voyager = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap, © CARTO', maxZoom: 20, subdomains: 'abcd'
+  });
+  const positron = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap, © CARTO', maxZoom: 20, subdomains: 'abcd'
+  });
+  const esriStreet = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '© Esri', maxZoom: 19
+  });
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 19
+  });
+  const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '© Esri', maxZoom: 19
+  });
+
+  voyager.addTo(map);
+  L.control.layers(
+    { '英文/拉丁 (Voyager)': voyager, '简洁英文 (Positron)': positron, 'Esri 街道': esriStreet, '本地语言 (OSM)': osm, '卫星图': esriSat },
+    null, { position: 'topright' }
+  ).addTo(map);
+
+  // Center reticle used when picking a location by dragging the map
+  const reticle = document.createElement('div');
+  reticle.className = 'pick-reticle';
+  reticle.innerHTML = '<div class="pin">📍</div><div class="dot"></div>';
+  map.getContainer().appendChild(reticle);
+
+  map.on('move', function() {
+    if (isPicking) updatePickBarText();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && isPicking) cancelPickLocation();
+  });
+}
+
+// ─── Markers ──────────────────────────────────────────────────
+function getCat(catId) {
+  return categories.find(c => c.id === catId) || { icon: '📍', color: '#888', name: catId };
+}
+function createMarkerIcon(cat) {
+  const c = getCat(cat);
+  return L.divIcon({
+    html: `<div class="map-marker" style="background:${c.color}"><span>${c.icon}</span></div>`,
+    className: '', iconSize: [32, 32], iconAnchor: [16, 32], popupAnchor: [0, -34]
+  });
+}
+function renderMarkers() {
+  Object.values(markers).forEach(m => map.removeLayer(m));
+  markers = {};
+  getFiltered().forEach(p => {
+    if (p.lat == null || p.lng == null) return;
+    const m = L.marker([p.lat, p.lng], { icon: createMarkerIcon(p.cat) }).addTo(map);
+    m.bindPopup(`<b>${escapeHtml(p.name)}</b><br>${getCat(p.cat).name}${p.rating ? ' · ⭐'+p.rating : ''}`);
+    m.on('click', () => openDetail(p.id));
+    markers[p.id] = m;
+  });
+}
+
+// ─── Reviews helpers ──────────────────────────────────────────
+function reviewsFor(placeId) { return reviews.filter(r => r.placeId === placeId); }
+function communityAvg(placeId) {
+  const rs = reviewsFor(placeId);
+  if (!rs.length) return null;
+  return rs.reduce((s, r) => s + (r.score || 0), 0) / rs.length;
+}
+
+// ─── Filter & list ────────────────────────────────────────────
+function getFiltered() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  return places.filter(p => {
+    const catOk = selectedCat === 'all' || p.cat === selectedCat;
+    const qOk = !q || p.name.toLowerCase().includes(q) || (p.note||'').toLowerCase().includes(q) || (p.style||'').toLowerCase().includes(q);
+    return catOk && qOk;
+  }).sort((a, b) => (b.rating||0) - (a.rating||0));
+}
+function setFilter(cat, el) {
+  selectedCat = cat;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  renderList(); renderMarkers();
+}
+function filterPlaces() { renderList(); renderMarkers(); }
+
+function starsHtml(r) {
+  if (!r) return '';
+  const full = Math.floor(r), half = r % 1 >= 0.5;
+  return '★'.repeat(full) + (half ? '½' : '');
+}
+function escapeHtml(s) { return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function renderList() {
+  const list = document.getElementById('placesList');
+  const filtered = getFiltered();
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state"><div style="font-size:40px">🗺</div><p>暂无店铺<br><small>点右上角“添加”开始收藏</small></p></div>`;
+    document.getElementById('statsBar').textContent = '暂无数据';
+    return;
+  }
+  list.innerHTML = filtered.map(p => {
+    const cat = getCat(p.cat);
+    const rc = reviewsFor(p.id).length;
+    const ca = communityAvg(p.id);
+    const thumb = (p.photos && p.photos[0]) ? `<img class="place-thumb" src="${p.photos[0]}">` : '';
+    return `<div class="place-item ${p.id === activeId ? 'active' : ''}" onclick="openDetail('${p.id}')">
+      <div class="place-item-row">
+        ${thumb}
+        <div class="place-item-body">
+          <div class="place-item-header">
+            <span class="place-cat-dot" style="background:${cat.color}"></span>
+            <span class="place-name">${escapeHtml(p.name)}</span>
+            <span class="place-rating">${p.rating ? p.rating + ' ' + starsHtml(p.rating) : ''}</span>
+          </div>
+          <div class="place-meta">
+            <span>${cat.icon} ${cat.name}</span>
+            ${p.price ? `<span class="price-tag">${p.price}</span>` : ''}
+            ${p.style ? `<span>${escapeHtml(p.style)}</span>` : ''}
+            ${rc ? `<span class="review-pill">大家 ${ca.toFixed(1)} · ${rc}条</span>` : ''}
+          </div>
+          ${p.note ? `<div class="place-note">📝 ${escapeHtml(p.note)}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('statsBar').textContent = `显示 ${filtered.length} / ${places.length} 家 · 共 ${reviews.length} 条评价`;
+}
+
+function renderFilterBar() {
+  const bar = document.getElementById('filterBar');
+  const counts = {};
+  places.forEach(p => counts[p.cat] = (counts[p.cat]||0) + 1);
+  bar.innerHTML = `<button class="filter-btn ${selectedCat==='all'?'active':''}" onclick="setFilter('all',this)">全部 ${places.length}</button>`;
+  categories.forEach(c => {
+    if (!counts[c.id]) return;
+    bar.innerHTML += `<button class="filter-btn ${selectedCat===c.id?'active':''}" onclick="setFilter('${c.id}',this)">
+      <span class="dot" style="background:${c.color}"></span>${c.icon}${c.name} ${counts[c.id]}
+    </button>`;
+  });
+}
+
+// ─── Detail panel ─────────────────────────────────────────────
+function openDetail(id) {
+  activeId = id;
+  const p = places.find(x => x.id === id);
+  if (!p) return;
+  const cat = getCat(p.cat);
+  document.getElementById('dCat').textContent = cat.icon + ' ' + cat.name;
+  document.getElementById('dCat').style.color = cat.color;
+  document.getElementById('dName').textContent = p.name;
+  document.getElementById('dStars').textContent = starsHtml(p.rating);
+  document.getElementById('dRating').textContent = p.rating ? `Google ${p.rating}` : '暂无 Google 评分';
+  const ca = communityAvg(id);
+  const cTag = document.getElementById('dCommunity');
+  if (ca != null) { cTag.style.display = ''; cTag.textContent = `大家 ${ca.toFixed(1)} ★ (${reviewsFor(id).length})`; }
+  else cTag.style.display = 'none';
+  document.getElementById('dPrice').textContent = p.price || '未知';
+  document.getElementById('dStyle').textContent = p.style || '—';
+  document.getElementById('dAddr').textContent = p.address || '—';
+  const nav = document.getElementById('dNav');
+  if (p.lat != null && p.lng != null) {
+    nav.style.display='';
+    const originParam = myLocLatLng ? `&origin=${myLocLatLng.lat},${myLocLatLng.lng}` : '';
+    nav.href = `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}&travelmode=driving${originParam}`;
+    if (!myLocLatLng && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        myLocLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        if (activeId === id) {
+          nav.href = `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}&travelmode=driving&origin=${myLocLatLng.lat},${myLocLatLng.lng}`;
+        }
+      }, () => {}, { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 });
+    }
+  }
+  else nav.style.display = 'none';
+  document.getElementById('dNote').value = p.note || '';
+  renderReviews(id);
+  renderDetailPhotos(p);
+
+  // reset review form
+  pendingReviewScore = 0; renderReviewStars();
+  document.getElementById('rvText').value = '';
+  document.getElementById('rvAuthor').value = localStorage.getItem('ryd_username') || '';
+  pendingReviewPhoto = null; renderReviewPhotoPreview();
+
+  document.getElementById('detailPanel').classList.add('open');
+  document.body.classList.add('detail-open');
+  if (window.collapseSheet) window.collapseSheet();
+  renderList();
+  if (p.lat != null && markers[id]) { map.panTo([p.lat, p.lng]); markers[id].openPopup(); }
+}
+function closeDetail() { activeId = null; document.getElementById('detailPanel').classList.remove('open'); document.body.classList.remove('detail-open'); renderList(); }
+
+function renderReviews(placeId) {
+  const wrap = document.getElementById('dReviewList');
+  const rs = reviewsFor(placeId).slice().reverse();
+  if (!rs.length) { wrap.innerHTML = `<div class="no-reviews">还没有人评价，来当第一个吧 👇</div>`; return; }
+  wrap.innerHTML = rs.map(r => `
+    <div class="review-card">
+      <div class="review-head">
+        <span class="review-author">${escapeHtml(r.author||'匿名')}</span>
+        <span class="review-stars">${'★'.repeat(r.score)}${'☆'.repeat(5-r.score)}</span>
+        <span class="review-date">${(r.createdAt||'').slice(0,10)}</span>
+      </div>
+      ${r.comment ? `<div class="review-text">${escapeHtml(r.comment)}</div>` : ''}
+      ${r.photo ? `<img src="${r.photo}" class="review-photo" onclick="openLightbox(this.src)">` : ''}
+      <span class="review-del" onclick="deleteReview('${r.id}')">删除</span>
+    </div>`).join('');
+}
+function pickReviewStar(v) { pendingReviewScore = v; renderReviewStars(); }
+function renderReviewStars() {
+  document.querySelectorAll('.add-review-box .star-pick').forEach(s =>
+    s.classList.toggle('lit', parseInt(s.dataset.v) <= pendingReviewScore));
+}
+async function submitReview() {
+  if (!activeId) return;
+  if (!pendingReviewScore) { toast('先点星星打个分吧'); return; }
+  const author = document.getElementById('rvAuthor').value.trim() || '匿名';
+  const comment = document.getElementById('rvText').value.trim();
+  localStorage.setItem('ryd_username', author);
+  const rv = { id: 'r_' + Date.now() + Math.random().toString(36).slice(2,6),
+    placeId: activeId, author, score: pendingReviewScore, comment, photo: pendingReviewPhoto, createdAt: new Date().toISOString() };
+  reviews.push(rv);
+  await DB.addReview(rv);
+  renderReviews(activeId); renderList();
+  const ca = communityAvg(activeId);
+  const cTag = document.getElementById('dCommunity');
+  cTag.style.display = ''; cTag.textContent = `大家 ${ca.toFixed(1)} ★ (${reviewsFor(activeId).length})`;
+  pendingReviewScore = 0; renderReviewStars();
+  document.getElementById('rvText').value = '';
+  pendingReviewPhoto = null; renderReviewPhotoPreview();
+  toast('评价已发布 ✓');
+}
+async function deleteReview(id) {
+  if (!confirm('删除这条评价？')) return;
+  reviews = reviews.filter(r => r.id !== id);
+  await DB.removeReview(id);
+  if (activeId) { renderReviews(activeId); renderList(); openDetail(activeId); }
+}
+
+async function saveNote() {
+  const p = places.find(x => x.id === activeId);
+  if (!p) return;
+  p.note = document.getElementById('dNote').value;
+  if (cloudEnabled) {
+    const notes = JSON.parse(localStorage.getItem('ryd_notes')||'{}');
+    notes[p.id] = p.note; localStorage.setItem('ryd_notes', JSON.stringify(notes));
+  } else { DB.saveNoteLocal(); }
+  renderList();
+}
+
+async function deletePlace() {
+  if (!confirm('确定删除这家店铺？相关评价也会一起删除。')) return;
+  if (markers[activeId]) map.removeLayer(markers[activeId]);
+  delete markers[activeId];
+  const id = activeId;
+  places = places.filter(p => p.id !== id);
+  reviews = reviews.filter(r => r.placeId !== id);
+  await DB.removePlace(id);
+  closeDetail(); renderAll();
+  toast('已删除');
+}
+
+function editPlace() {
+  const p = places.find(x => x.id === activeId);
+  if (!p) return;
+  openAddModal();
+  setTimeout(() => {
+    document.getElementById('modalTitle').textContent = '编辑店铺';
+    document.getElementById('editId').value = p.id;
+    document.getElementById('fName').value = p.name || '';
+    document.getElementById('fRating').value = p.rating || '';
+    document.getElementById('fPrice').value = p.price || '';
+    document.getElementById('fStyle').value = p.style || '';
+    document.getElementById('fAddr').value = p.address || '';
+    document.getElementById('fNote').value = p.note || '';
+    if (p.lat != null) setPendingLocation(p.lat, p.lng, false);
+    pendingPhotos = (p.photos || []).slice(); renderPhotoGrid();
+    selectCat(p.cat);
+  }, 50);
+}
+
+// ─── Add/Edit modal ───────────────────────────────────────────
+let selectedCatInModal = 'restaurant';
+function openAddModal(keepLocation) {
+  if (!keepLocation) { pendingLat = null; pendingLng = null; pendingPhotos = []; }
+  renderPhotoGrid();
+  document.getElementById('modalTitle').textContent = '添加新店铺';
+  document.getElementById('editId').value = '';
+  ['fName','fRating','fPrice','fStyle','fAddr','fNote','customCatName','coordInput','linkInput','geoInput'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  document.getElementById('geoResults').innerHTML = '';
+  document.getElementById('customCatGroup').style.display = 'none';
+  const info = document.getElementById('pickMapInfo');
+  if (keepLocation && pendingLat != null) { info.style.display='block'; info.textContent = `✓ 已选位置：${(+pendingLat).toFixed(5)}, ${(+pendingLng).toFixed(5)}`; }
+  else { info.style.display='none'; info.textContent=''; }
+  switchLocTab('paneMap', document.querySelector('.loc-tab'));
+  renderCatGrid(); selectCat('restaurant');
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function renderCatGrid() {
+  document.getElementById('catGrid').innerHTML = categories.map(c =>
+    `<div class="cat-opt ${c.id === selectedCatInModal ? 'selected' : ''}" onclick="selectCat('${c.id}')">
+      <span class="cat-icon">${c.icon}</span>${c.name}
+    </div>`).join('');
+}
+function selectCat(id) {
+  selectedCatInModal = id;
+  document.querySelectorAll('.cat-opt').forEach((el, i) => el.classList.toggle('selected', categories[i].id === id));
+  document.getElementById('customCatGroup').style.display = id === 'custom' ? 'block' : 'none';
+}
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modalOverlay')) return;
+  document.getElementById('modalOverlay').classList.remove('open');
+  if (isPicking) { document.body.classList.remove('picking'); isPicking = false; }
+}
+
+async function savePlace() {
+  const name = document.getElementById('fName').value.trim();
+  if (!name) { toast('请填写店名'); return; }
+  let catId = selectedCatInModal;
+  if (catId === 'custom') {
+    const customName = document.getElementById('customCatName').value.trim();
+    if (!customName) { toast('请输入自定义分类名称'); return; }
+    const existing = categories.find(c => c.name === customName);
+    if (existing) catId = existing.id;
+    else {
+      const newCat = { id: 'cat_' + Date.now(), name: customName, icon: '📌', color: '#' + Math.floor(Math.random()*0xaaaaaa+0x444444).toString(16) };
+      categories.push(newCat); localStorage.setItem('ryd_cats', JSON.stringify(categories)); catId = newCat.id;
+    }
+  }
+  const editId = document.getElementById('editId').value;
+  const existing = editId ? places.find(p=>p.id===editId) : null;
+  const data = {
+    id: editId || 'p_' + Date.now(),
+    name, cat: catId,
+    rating: parseFloat(document.getElementById('fRating').value) || null,
+    price: document.getElementById('fPrice').value,
+    style: document.getElementById('fStyle').value.trim(),
+    address: document.getElementById('fAddr').value.trim(),
+    note: document.getElementById('fNote').value.trim(),
+    lat: pendingLat != null ? parseFloat(pendingLat) : null,
+    lng: pendingLng != null ? parseFloat(pendingLng) : null,
+    photos: pendingPhotos.slice(),
+    createdAt: existing ? existing.createdAt : new Date().toISOString()
+  };
+  if (existing) { const idx = places.findIndex(p => p.id === editId); places[idx] = data; }
+  else places.push(data);
+  // 保留个人备注到本地（云端模式下备注不上传）
+  if (cloudEnabled) { const notes = JSON.parse(localStorage.getItem('ryd_notes')||'{}'); notes[data.id] = data.note; localStorage.setItem('ryd_notes', JSON.stringify(notes)); }
+  await DB.upsertPlace(data);
+  document.getElementById('modalOverlay').classList.remove('open');
+  renderAll();
+  if (data.lat != null) openDetail(data.id);
+  toast(existing ? '已更新' : '已添加 ✓');
+}
+
+// ─── Location: tabs & methods ─────────────────────────────────
+function switchLocTab(paneId, el) {
+  document.querySelectorAll('.loc-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.loc-pane').forEach(p => p.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById(paneId).classList.add('active');
+}
+function setPendingLocation(lat, lng, recenter) {
+  pendingLat = (+lat).toFixed(6); pendingLng = (+lng).toFixed(6);
+  const info = document.getElementById('pickMapInfo');
+  info.style.display = 'block';
+  info.textContent = `✓ 已选位置：${(+pendingLat).toFixed(5)}, ${(+pendingLng).toFixed(5)}`;
+  if (recenter && map) { map.setView([lat, lng], Math.max(map.getZoom(), 15)); }
+}
+function startPickLocation() {
+  // Hide the add/edit modal WITHOUT clearing what the user already typed
+  document.getElementById('modalOverlay').classList.remove('open');
+  document.body.classList.add('picking'); isPicking = true;
+  // If we already have a pending point, center on it so the pin starts there
+  if (pendingLat != null && pendingLng != null) {
+    map.setView([+pendingLat, +pendingLng], Math.max(map.getZoom(), 15));
+  }
+  setTimeout(() => { map.invalidateSize(); updatePickBarText(); }, 60);
+}
+function updatePickBarText() {
+  if (!map) return;
+  const c = map.getCenter();
+  const el = document.getElementById('pickBarText');
+  if (el) el.innerHTML = `拖动地图，把图钉对准位置<br><b>${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</b>`;
+}
+function confirmPickLocation() {
+  const c = map.getCenter();
+  pendingLat = c.lat.toFixed(6); pendingLng = c.lng.toFixed(6);
+  const info = document.getElementById('pickMapInfo');
+  if (info) {
+    info.style.display = 'block';
+    info.textContent = `✓ 已选位置：${(+pendingLat).toFixed(5)}, ${(+pendingLng).toFixed(5)}`;
+  }
+  exitPicking();
+}
+function cancelPickLocation() { exitPicking(); }
+function exitPicking() {
+  document.body.classList.remove('picking'); isPicking = false;
+  // Re-open the add/edit modal with everything still intact
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function parseCoords(text) {
+  if (!text) return null;
+  text = text.trim();
+  let m = text.match(/@(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/);                 // google /@lat,lng
+  if (m) return [parseFloat(m[1]), parseFloat(m[2])];
+  m = text.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/);                    // google !3d!4d
+  if (m) return [parseFloat(m[1]), parseFloat(m[2])];
+  m = text.match(/[?&](?:q|query|ll)=(-?\d{1,2}\.\d+),\s*(-?\d{1,3}\.\d+)/);   // ?q=lat,lng
+  if (m) return [parseFloat(m[1]), parseFloat(m[2])];
+  m = text.match(/(-?\d{1,2}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/);                // plain "lat, lng"
+  if (m) return [parseFloat(m[1]), parseFloat(m[2])];
+  return null;
+}
+function applyCoordInput() {
+  const c = parseCoords(document.getElementById('coordInput').value);
+  if (!c) { toast('没识别到坐标，格式应为 24.711, 46.674'); return; }
+  setPendingLocation(c[0], c[1], true);
+  toast('坐标已应用 ✓');
+}
+function decodeEntities(s) {
+  if (!s) return s;
+  const t = document.createElement('textarea');
+  t.innerHTML = s;
+  let out = t.value;
+  try { out = decodeURIComponent(out); } catch (e) {}
+  return out;
+}
+function extractMapsInfo(text) {
+  const info = { coords: null, name: '', typeText: '' };
+  if (!text) return info;
+  info.coords = parseCoords(text);
+  // Name: try several patterns found in Google Maps share pages / URLs
+  let m = text.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+  if (m) info.name = decodeEntities(m[1]);
+  if (!info.name) { m = text.match(/<title>([^<]+)<\/title>/i); if (m) info.name = decodeEntities(m[1]); }
+  if (!info.name) { m = text.match(/\/maps\/place\/([^\/@?]+)/i); if (m) info.name = decodeEntities(m[1].replace(/\+/g, ' ')); }
+  if (!info.name) { m = text.match(/[?&]q=([^&@]+?)(?:[@&]|$)/i); if (m && !/^-?\d/.test(m[1])) info.name = decodeEntities(m[1].replace(/\+/g, ' ')); }
+  if (info.name) {
+    info.name = info.name.replace(/\s*[-–|·]\s*Google\s*Maps.*$/i, '')
+                         .replace(/\s*-\s*Google\s*地图.*$/i, '').trim();
+  }
+  // Type/description text to help guess a category
+  m = text.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i);
+  if (m) info.typeText = decodeEntities(m[1]);
+  if (!info.typeText) { m = text.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i); if (m) info.typeText = decodeEntities(m[1]); }
+  return info;
+}
+async function resolveViaProxy(url) {
+  // Follow short links / fetch the page HTML via public CORS proxies (best-effort)
+  const proxies = [
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`
+  ];
+  for (const make of proxies) {
+    try {
+      const res = await fetch(make(url), { redirect: 'follow' });
+      if (!res.ok) continue;
+      let body = await res.text();
+      try { const j = JSON.parse(body); if (j && j.contents) body = j.contents; } catch (e) {}
+      if (body && body.length > 20) return body;
+    } catch (e) { /* try next proxy */ }
+  }
+  return '';
+}
+async function applyLinkInput(btn) {
+  const raw = (document.getElementById('linkInput').value || '').trim();
+  if (!raw) { toast('请先粘贴链接'); return; }
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '识别中…'; }
+  try {
+    let info = extractMapsInfo(raw);
+    // If it's a short link (or we got nothing useful), try resolving over the network
+    const isShort = /goo\.gl|maps\.app|g\.co/i.test(raw);
+    if ((isShort || (!info.coords && !info.name)) && /^https?:\/\//i.test(raw)) {
+      const urlMatch = raw.match(/https?:\/\/\S+/);
+      const html = urlMatch ? await resolveViaProxy(urlMatch[0]) : '';
+      if (html) {
+        const more = extractMapsInfo(html);
+        info.coords = info.coords || more.coords;
+        info.name = info.name || more.name;
+        info.typeText = info.typeText || more.typeText;
+      }
+    }
+
+    let didSomething = false;
+    if (info.name) {
+      const nameEl = document.getElementById('fName');
+      if (nameEl && !nameEl.value.trim()) { nameEl.value = info.name; didSomething = true; }
+    }
+    // Guess a category from name + description text
+    const guess = guessCategoryFromText(`${info.name} ${info.typeText}`);
+    if (guess) { selectCat(guess); didSomething = true; }
+
+    if (info.coords) {
+      setPendingLocation(info.coords[0], info.coords[1], true);
+      didSomething = true;
+      toast(info.name ? `已提取：${info.name} ✓` : '已提取坐标 ✓');
+    } else if (didSomething) {
+      toast('已读取店名/分类，但没拿到坐标，请用“地图选点”或“输入坐标”补上');
+    } else {
+      toast('没能从这个链接读到信息，请在浏览器打开后复制地址栏完整链接再试');
+    }
+  } catch (e) {
+    toast('识别失败，请改用完整链接或手动选点');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label || '从链接提取信息'; }
+  }
+}
+
+// ── 整个清单：尽力从分享链接里抓出所有地点（最稳的还是 CSV 工具，这是 best-effort）──
+function isValidLatLng(lat, lng) {
+  return isFinite(lat) && isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+}
+function looksLikeJunkName(s) {
+  if (!s || s.length < 2) return true;
+  return /^https?:|^\/|googleusercontent|gstatic|ChIJ|^0x[0-9a-f]|\/\/|^[\d.,\s+-]+$|^[A-Za-z]{2}$/i.test(s);
+}
+function extractListPlaces(html) {
+  if (!html) return [];
+  const out = [], seen = new Set();
+  const push = (name, lat, lng) => {
+    if (!isValidLatLng(lat, lng)) return;
+    const key = lat.toFixed(5) + ',' + lng.toFixed(5);
+    if (seen.has(key)) return;
+    seen.add(key);
+    let nm = name ? decodeEntities(name).trim() : '';
+    if (looksLikeJunkName(nm)) nm = '';
+    out.push({ name: nm || ('清单地点 ' + (out.length + 1)), address: '', note: '', url: '', lat, lng });
+  };
+  // A: 名字 + 紧随其后的 [null,null,lat,lng] 坐标块（谷歌常见的 LatLng 编码）
+  const reA = /"([^"\\]{2,70})"[^[]{0,700}?\[null,null,(-?\d{1,2}\.\d{3,}),(-?\d{1,3}\.\d{3,})\]/g;
+  let m;
+  while ((m = reA.exec(html)) && out.length < 400) push(m[1], parseFloat(m[2]), parseFloat(m[3]));
+  // B: 兜底——只要坐标块（名字之后让用户自己补）
+  if (out.length < 2) {
+    const reB = /\[null,null,(-?\d{1,2}\.\d{3,}),(-?\d{1,3}\.\d{3,})\]/g;
+    while ((m = reB.exec(html)) && out.length < 400) push('', parseFloat(m[1]), parseFloat(m[2]));
+  }
+  return out;
+}
+async function applyListLink(btn) {
+  const raw = (document.getElementById('linkInput').value || '').trim();
+  if (!raw) { toast('请先粘贴清单链接'); return; }
+  const urlMatch = raw.match(/https?:\/\/\S+/);
+  if (!urlMatch) { toast('请粘贴清单的链接（http 开头）'); return; }
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '正在抓取清单…'; }
+  try {
+    const html = await resolveViaProxy(urlMatch[0]);
+    if (!html) {
+      toast('抓不到清单内容（谷歌限制了访问）。请用「清单转 CSV」工具导出后，点顶部“导入”');
+      return;
+    }
+    const rows = extractListPlaces(html);
+    if (!rows.length) {
+      toast('没能从清单里读出地点。请用「清单转 CSV」工具导出后，点顶部“导入”');
+      return;
+    }
+    pendingImportRows = rows;
+    pendingImportSourceName = ((extractMapsInfo(html).name) || '谷歌清单').slice(0, 40);
+    document.getElementById('modalOverlay').classList.remove('open'); // 关掉“添加”弹窗，走批量预览
+    openImportPreview();
+  } catch (e) {
+    toast('抓取失败。请用「清单转 CSV」工具导出后，点顶部“导入”');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label || '整个清单：批量导入（实验）'; }
+  }
+}
+async function runGeocode() {
+  const q = document.getElementById('geoInput').value.trim();
+  if (!q) return;
+  const box = document.getElementById('geoResults');
+  box.innerHTML = '<div class="hint">搜索中...</div>';
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=en&q=${encodeURIComponent(q)}`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const data = await res.json();
+    if (!data.length) { box.innerHTML = '<div class="hint">没找到，换个关键词试试，或用其它定位方式。</div>'; return; }
+    box.innerHTML = data.map(d =>
+      `<div class="geo-result" onclick="pickGeo(${d.lat},${d.lon})">${escapeHtml(d.display_name)}</div>`).join('');
+  } catch (e) { box.innerHTML = '<div class="hint">网络错误，请稍后重试。</div>'; }
+}
+function pickGeo(lat, lng) {
+  setPendingLocation(lat, lng, true);
+  document.getElementById('geoResults').innerHTML = '';
+  toast('位置已选定 ✓');
+}
+
+// ─── Locate me (实时定位：持续跟踪我的位置) ────────────────────
+function geoErrMsg(err) {
+  if (!err) return '定位失败，请检查浏览器定位权限';
+  switch (err.code) {
+    case 1: return '定位被拒绝：请到浏览器/系统设置里，允许此网页使用位置权限';
+    case 2: return '定位失败：暂时获取不到位置信号，请到室外或开启 WiFi/移动网络后重试';
+    case 3: return '定位超时：信号弱或权限弹窗未及时确认，请重试';
+    default: return '定位失败：' + (err.message || '请检查浏览器定位权限');
+  }
+}
+let myLocMarker = null, myLocAccCircle = null, myLocWatchId = null, myLocTracking = false, myLocLatLng = null;
+function locateMe() {
+  if (myLocTracking) { stopLiveLocation(); return; }
+  if (!navigator.geolocation) { toast('当前环境不支持定位'); return; }
+  if (window.isSecureContext === false && location.hostname !== 'localhost') {
+    toast('浏览器要求使用 HTTPS 才能定位，请用 https:// 打开本页面');
+    return;
+  }
+  toast('正在获取你的位置...');
+  myLocTracking = true;
+  updateLocateBtn();
+  // Step 1: a fast, low-accuracy fix. Desktops have no GPS and time out on
+  // high-accuracy requests, so this plants the blue dot quickly and reliably.
+  navigator.geolocation.getCurrentPosition(
+    pos => { updateMyLocation(pos, true); startLocationWatch(); },
+    err => {
+      // Retry once with high accuracy (helps some phones), else give up.
+      navigator.geolocation.getCurrentPosition(
+        pos => { updateMyLocation(pos, true); startLocationWatch(); },
+        err2 => { toast(geoErrMsg(err2)); myLocTracking = false; updateLocateBtn(); },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+      );
+    },
+    { enableHighAccuracy: false, maximumAge: 60000, timeout: 8000 }
+  );
+}
+function startLocationWatch() {
+  if (myLocWatchId != null) return;
+  myLocWatchId = navigator.geolocation.watchPosition(
+    pos => updateMyLocation(pos, false),
+    err => { /* keep the last dot; transient watch errors are common on desktop */ },
+    { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 }
+  );
+}
+function updateMyLocation(pos, recenter) {
+  const { latitude, longitude, accuracy } = pos.coords;
+  myLocLatLng = { lat: latitude, lng: longitude };
+  if (!myLocMarker) {
+    myLocAccCircle = L.circle([latitude, longitude], { radius: accuracy || 30, color: '#2f8fd0', weight: 1, fillColor: '#2f8fd0', fillOpacity: 0.10 }).addTo(map);
+    myLocMarker = L.circleMarker([latitude, longitude], { radius: 9, color: '#fff', fillColor: '#1a73e8', fillOpacity: 1, weight: 3 }).addTo(map);
+    toast('定位成功 ✓ 蓝点就是你的位置，再点一次可关闭');
+  } else {
+    myLocMarker.setLatLng([latitude, longitude]);
+    myLocAccCircle.setLatLng([latitude, longitude]).setRadius(accuracy || 30);
+  }
+  if (recenter) map.setView([latitude, longitude], Math.max(map.getZoom(), 15));
+}
+function stopLiveLocation() {
+  if (myLocWatchId != null) navigator.geolocation.clearWatch(myLocWatchId);
+  myLocWatchId = null; myLocTracking = false;
+  if (myLocMarker) { map.removeLayer(myLocMarker); myLocMarker = null; }
+  if (myLocAccCircle) { map.removeLayer(myLocAccCircle); myLocAccCircle = null; }
+  updateLocateBtn();
+  toast('已停止实时定位');
+}
+function updateLocateBtn() {
+  const btn = document.querySelector('.map-fab button');
+  if (btn) { btn.style.background = myLocTracking ? '#dceeff' : ''; btn.title = myLocTracking ? '点击关闭实时定位' : '定位到我附近（持续跟踪）'; }
+}
+
+// ─── Persistence & render ─────────────────────────────────────
+function renderAll() { renderFilterBar(); renderList(); renderMarkers(); }
+
+// ─── Export / Import ──────────────────────────────────────────
+function exportData() {
+  const data = { places, reviews, categories, exportedAt: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `利雅得探店_${new Date().toLocaleDateString('zh')}.json`;
+  a.click();
+}
+function importData() { document.getElementById('importFile').click(); }
+
+// 自动识别文件类型：本站备份 .json / Google 地图列表 .csv / Google "Saved Places.json"
+async function handleImport(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const fname = file.name;
+  e.target.value = '';
+  try {
+    if (fname.toLowerCase().endsWith('.csv')) { await handleGoogleCsvImport(file, fname); return; }
+    const text = await file.text();
+    let data;
+    try { data = JSON.parse(text); } catch { toast('文件格式错误，无法解析'); return; }
+    if (data && Array.isArray(data.places)) { await handleBackupImport(data); return; }
+    if (data && data.type === 'FeatureCollection' && Array.isArray(data.features)) { await handleGoogleGeoJsonImport(data, fname); return; }
+    toast('没认出这个文件格式（支持：本站导出的 .json 备份 / Google 地图列表 .csv / Saved Places.json）');
+  } catch (err) { toast('读取文件失败：' + (err.message || '未知错误')); }
+}
+
+// ① 本站自己导出的 .json 备份 —— 原有逻辑
+async function handleBackupImport(data) {
+  if (!confirm(`导入 ${data.places.length} 家店铺？（合并到现有数据）`)) return;
+  const existingIds = new Set(places.map(p => p.id));
+  for (const p of data.places) if (!existingIds.has(p.id)) { places.push(p); await DB.upsertPlace(p); }
+  if (data.reviews) {
+    const rids = new Set(reviews.map(r => r.id));
+    for (const r of data.reviews) if (!rids.has(r.id)) { reviews.push(r); await DB.addReview(r); }
+  }
+  if (data.categories) {
+    const cids = new Set(categories.map(c => c.id));
+    data.categories.forEach(c => { if (!cids.has(c.id)) categories.push(c); });
+    localStorage.setItem('ryd_cats', JSON.stringify(categories));
+  }
+  renderAll(); toast('导入成功 ✓');
+}
+
+// ② Google 地图「已保存的地点」批量导入（CSV 或 GeoJSON）
+let pendingImportRows = null, pendingImportSourceName = '';
+
+function guessCategoryFromText(text) {
+  const t = (text || '').toLowerCase();
+  if (!t.trim()) return '';
+  const rules = [
+    // order matters: most specific first
+    [/水烟|shisha|sheesha|hookah|argileh|arghileh|nargila|معسل|شيشة|أركيلة/i, 'hookah'],
+    [/椰枣|巧克力|chocolate|chocolatier|truffle|date[s]?\b|تمر|شوكولا/i, 'chocolate'],
+    [/甜品|甜点|dessert|ice ?cream|gelato|sweet|蛋糕|cake|bakery|pastr|烘焙|冰淇淋|kunafa|kunafah|knafeh|waffle|crepe|donut|حلويات|آيس كريم|بوظة/i, 'dessert'],
+    [/咖啡|coffee|cafe|café|espresso|latte|قهوة|كافيه/i, 'cafe'],
+    [/餐|吃|美食|food|eat|restaurant|dining|diner|grill|烧烤|bbq|海鲜|seafood|火锅|hotpot|burger|pizza|kitchen|shawarma|kebab|mandi|kabsa|مطعم|مشاوي/i, 'restaurant'],
+    [/玩|娱乐|play|fun|entertainment|乐园|景点|游乐|arcade|cinema|park|游戏|bowling|كافيه ترفيه|ترفيه|ملاهي/i, 'entertainment'],
+  ];
+  for (const [re, id] of rules) if (re.test(t)) return id;
+  // "lounge" alone most often means a shisha lounge in this context
+  if (/lounge|صالة/i.test(t)) return 'hookah';
+  return 'other';
+}
+
+// Google Takeout「Saved」选项导出的 CSV：每个列表一个文件，列名通常是 Title / Note / URL / Address
+async function handleGoogleCsvImport(file, fname) {
+  if (typeof Papa === 'undefined') { toast('CSV 解析库没加载成功，检查一下网络'); return; }
+  const text = await file.text();
+  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+  const rows = parsed.data || [];
+  if (!rows.length) { toast('这个 CSV 里没有读到数据'); return; }
+  const keys = Object.keys(rows[0] || {});
+  const findKey = re => keys.find(k => re.test(k));
+  const kTitle = findKey(/title|name|地点|名称|店名/i);
+  const kNote  = findKey(/note|comment|备注|描述/i);
+  const kAddr  = findKey(/address|地址/i);
+  const kUrl   = findKey(/url|link|链接/i);
+  const kLat   = findKey(/^lat\b|latitude|纬度/i);
+  const kLng   = findKey(/^(lng|lon|long)\b|longitude|经度/i);
+  if (!kTitle) { toast('没找到店名这一列，这可能不是 Google 地图导出的 CSV'); return; }
+  const num = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+  pendingImportRows = rows.map(r => {
+    let lat = kLat ? num(r[kLat]) : null;
+    let lng = kLng ? num(r[kLng]) : null;
+    const url = kUrl ? (r[kUrl] || '').trim() : '';
+    if ((lat == null || lng == null) && url) {       // 没有独立坐标列时，尝试从链接里抠坐标
+      const c = parseCoords(url);
+      if (c) { lat = c[0]; lng = c[1]; }
+    }
+    return {
+      name: (r[kTitle] || '').trim(),
+      address: kAddr ? (r[kAddr] || '').trim() : '',
+      note: kNote ? (r[kNote] || '').trim() : '',
+      url,
+      lat, lng
+    };
+  }).filter(r => r.name);
+  pendingImportSourceName = fname.replace(/\.csv$/i, '');
+  openImportPreview();
+}
+
+// Google Takeout「Maps（你的位置信息）」导出的 Saved Places.json（GeoJSON，坐标格式不太统一，做了兼容）
+async function handleGoogleGeoJsonImport(data, fname) {
+  const feats = data.features || [];
+  if (!feats.length) { toast('这个文件里没有读到地点'); return; }
+  pendingImportRows = feats.map(f => {
+    const p = f.properties || {};
+    const loc = p.Location || p.location || {};
+    let lat = null, lng = null;
+    if (f.geometry && Array.isArray(f.geometry.coordinates)) {
+      const [lo, la] = f.geometry.coordinates;
+      if (!(lo === 0 && la === 0)) { lng = lo; lat = la; } // 0,0 是 Google 导出的已知 bug，当作缺失处理
+    }
+    if (lat == null && loc.Latitude != null) { lat = loc.Latitude; lng = loc.Longitude; }
+    return {
+      name: (p.title || loc['Business Name'] || loc.Name || '未命名地点').trim(),
+      address: (loc.Address || p.address || '').trim(),
+      note: (p.Comment || p.comment || '').trim(),
+      url: p.google_maps_url || p.url || '',
+      lat: (typeof lat === 'number' && !isNaN(lat)) ? lat : null,
+      lng: (typeof lng === 'number' && !isNaN(lng)) ? lng : null
+    };
+  }).filter(r => r.name);
+  pendingImportSourceName = fname.replace(/\.json$/i, '');
+  openImportPreview();
+}
+
+function openImportPreview() {
+  if (!pendingImportRows || !pendingImportRows.length) { toast('没有可导入的地点'); return; }
+  const guessed = guessCategoryFromText(pendingImportSourceName);
+  const withCoords = pendingImportRows.filter(r => r.lat != null && r.lng != null).length;
+  const need = pendingImportRows.length - withCoords;
+  document.getElementById('ipSummary').textContent =
+    `识别到 ${pendingImportRows.length} 个地点，来自「${pendingImportSourceName}」。其中 ${withCoords} 个自带坐标（秒导入）` +
+    (need ? `，${need} 个需要自动定位（每个约 1 秒，请耐心等）` : '') +
+    `。分类会按每家店名自动识别，识别不出的归到下面这个默认分类。`;
+  const sel = document.getElementById('ipCatSelect');
+  sel.innerHTML = categories.filter(c => c.id !== 'custom').map(c =>
+    `<option value="${c.id}" ${c.id === guessed ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('');
+  document.getElementById('ipProgress').style.display = 'none';
+  document.getElementById('ipProgress').textContent = '';
+  document.getElementById('ipConfirmBtn').disabled = false;
+  document.getElementById('ipConfirmBtn').textContent = need ? '开始导入并自动定位' : '开始导入';
+  document.getElementById('importPreviewOverlay').classList.add('open');
+}
+function closeImportPreview() {
+  document.getElementById('importPreviewOverlay').classList.remove('open');
+  pendingImportRows = null;
+}
+function simpleHash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(36);
+}
+async function geocodeOne(query) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=en&q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const data = await res.json();
+    if (data && data[0]) return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+  } catch (e) {}
+  return null;
+}
+async function confirmGoogleImport() {
+  if (!pendingImportRows) return;
+  const catId = document.getElementById('ipCatSelect').value;
+  document.getElementById('ipConfirmBtn').disabled = true;
+  document.getElementById('ipCancelBtn').disabled = true;
+  const progress = document.getElementById('ipProgress');
+  progress.style.display = 'block';
+
+  const existingIds = new Set(places.map(p => p.id));
+  let added = 0, failed = 0;
+  const total = pendingImportRows.length;
+  for (let i = 0; i < total; i++) {
+    const row = pendingImportRows[i];
+    progress.textContent = `处理中 ${i + 1}/${total}：${row.name}`;
+    const id = 'gm_' + simpleHash(row.name + '|' + row.address);
+    if (existingIds.has(id)) continue; // 之前已经导入过同一个地点，跳过避免重复
+
+    let lat = row.lat, lng = row.lng;
+    if (lat == null || lng == null) {
+      const q = row.address ? `${row.name}, ${row.address}` : row.name;
+      const r = await geocodeOne(q);
+      if (r) { lat = r[0]; lng = r[1]; } else { failed++; }
+      await new Promise(res => setTimeout(res, 1100)); // 对免费地理编码服务限速，礼貌使用
+    }
+    let rowCat = guessCategoryFromText([row.name, row.note, row.address].join(' '));
+    if (!rowCat || rowCat === 'other') rowCat = catId;  // 识别不出 → 用默认分类
+    const place = {
+      id, name: row.name, cat: rowCat, rating: null, price: '',
+      style: '', address: row.address || '', note: row.note || '',
+      lat: lat != null ? lat : null, lng: lng != null ? lng : null,
+      photos: [], createdAt: new Date().toISOString()
+    };
+    places.push(place);
+    existingIds.add(id);
+    await DB.upsertPlace(place);
+    added++;
+  }
+  renderAll();
+  closeImportPreview();
+  toast(`导入完成：新增 ${added} 家${failed ? `，${failed} 家没能自动定位（可在左侧列表点开手动编辑位置）` : ''} ✓`);
+}
+
+// ─── Toast ────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ─── Cloud badge (updates both the topbar + the mobile sheet copy) ────
+function setCloudBadge(text, on) {
+  document.querySelectorAll('.cloud-badge').forEach(b => {
+    b.textContent = text;
+    b.classList.toggle('on', !!on);
+    b.classList.toggle('off', !on);
+  });
+}
+
+// ─── Mobile bottom sheet (draggable list) ─────────────────────
+function isMobile() { return window.matchMedia('(max-width: 600px)').matches; }
+function initSheet() {
+  const sheet = document.getElementById('sidebar');
+  const handle = document.getElementById('sheetHandle');
+  if (!sheet || !handle) return;
+  let snaps = [];            // translateY values: [expanded, mid, collapsed]
+  let current = 1;           // index into snaps; start at mid
+  let dragging = false, startY = 0, startTransform = 0, moved = false;
+
+  function computeSnaps() {
+    const h = sheet.offsetHeight || Math.round(window.innerHeight * 0.7);
+    const peek = 156;        // how much stays visible when collapsed
+    snaps = [0, Math.round(h * 0.46), Math.max(0, h - peek)];
+  }
+  function apply(i, withTransition) {
+    current = Math.max(0, Math.min(snaps.length - 1, i));
+    sheet.style.transition = withTransition ? 'transform 0.25s ease' : 'none';
+    sheet.style.transform = `translateY(${snaps[current]}px)`;
+  }
+  window.collapseSheet = function () {
+    if (!isMobile()) return;
+    computeSnaps(); apply(2, true);
+  };
+
+  function onDown(e) {
+    if (!isMobile()) return;
+    computeSnaps();
+    dragging = true; moved = false;
+    startY = (e.touches ? e.touches[0].clientY : e.clientY);
+    startTransform = snaps[current];
+    sheet.style.transition = 'none';
+    handle.style.cursor = 'grabbing';
+  }
+  function onMove(e) {
+    if (!dragging) return;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY);
+    let dy = y - startY;
+    if (Math.abs(dy) > 4) moved = true;
+    let target = startTransform + dy;
+    target = Math.max(snaps[0] - 20, Math.min(snaps[snaps.length - 1] + 40, target));
+    sheet.style.transform = `translateY(${target}px)`;
+    if (e.cancelable) e.preventDefault();
+  }
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    handle.style.cursor = 'grab';
+    const cur = parseFloat((sheet.style.transform.match(/translateY\(([-0-9.]+)px\)/) || [])[1] || snaps[current]);
+    if (!moved) {                       // tap = cycle to next snap
+      apply((current + 1) % snaps.length, true);
+      return;
+    }
+    // snap to nearest
+    let best = 0, bestD = Infinity;
+    snaps.forEach((s, i) => { const d = Math.abs(s - cur); if (d < bestD) { bestD = d; best = i; } });
+    apply(best, true);
+  }
+
+  handle.addEventListener('touchstart', onDown, { passive: true });
+  handle.addEventListener('touchmove', onMove, { passive: false });
+  handle.addEventListener('touchend', onUp);
+  handle.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+
+  function syncForViewport() {
+    if (isMobile()) { computeSnaps(); apply(current, false); }
+    else { sheet.style.transition = 'none'; sheet.style.transform = ''; }  // desktop: clear inline transform
+  }
+  window.addEventListener('resize', syncForViewport);
+  // initialise
+  if (isMobile()) { computeSnaps(); apply(1, false); }
+}
+
+// ─── Seed data (真实高分店铺，来自 Google Maps) ─────────────────
+const SEED = [
+  // 餐厅
+  ['restaurant','The Butcher Shop & Grill',4.8,'＄＄＄','牛排馆','招牌牛排，肉质新鲜，Tahlia 街',24.7003027,46.6919562],
+  ['restaurant','Nozomi Riyadh',4.7,'＄＄＄＄','日料 · 寿司','全城公认最好的寿司之一',24.7010494,46.6771162],
+  ['restaurant','Fi Glbak (في قلبك)',4.7,'＄＄','地道沙特菜','米其林指南推荐，传统氛围',24.7265958,46.6440106],
+  ['restaurant','Yauatcha Riyadh',4.7,'','粤式点心','费萨尔塔内，精致中餐',24.690014,46.6864312],
+  ['restaurant','Vidro',4.7,'','创意融合菜','环境一流，招牌 Vidro 沙拉',24.6977201,46.6863305],
+  ['restaurant','COYA Riyadh',4.6,'','秘鲁拉美菜','氛围超棒，晚上有 DJ',24.7045336,46.7058862],
+  ['restaurant','Meat Moot',4.6,'','烟熏 BBQ','招牌烟熏牛胸肉',24.7037908,46.7024785],
+  ['restaurant','MYAZU Riyadh',4.4,'＄＄＄＄','高端日料','环境精致，适合约会',24.6999984,46.7048876],
+  // 咖啡
+  ['cafe','The Sweet Sip',4.7,'','精品手冲','24 小时，也门/沙特手冲',24.7018859,46.6812368],
+  ['cafe','Beanery Cafe',4.6,'＄','咖啡 · 早午餐','性价比高，现烤可颂',24.7217942,46.651436],
+  ['cafe','CARVE Coffee Bar',4.5,'','精品咖啡','Flat White 一流，有停车',24.7143718,46.6767119],
+  ['cafe','Calibrated Coffee Roasters',4.5,'＄＄','自烘咖啡','能看到 KAFD 景，冰 V60',24.7632824,46.6541047],
+  ['cafe','Breehant Coffee Roastery',4.5,'','自烘咖啡','24 小时营业，本地烘焙',24.8128222,46.6254867],
+  ['cafe','Atmosphere Specialty Coffee',4.2,'','人气咖啡','King Fahd，周末很满',24.7351001,46.6766686],
+  // 椰枣巧克力
+  ['chocolate','Bateel – Kingdom Centre',4.1,'','椰枣 · 巧克力礼盒','送礼首选，王国中心 B1',24.7112884,46.6750875],
+  ['chocolate','Cafe Bateel – Tahlia',4.6,'＄＄＄','椰枣咖啡馆','椰枣甜点，早餐很赞',24.6998475,46.690836],
+  // 甜品
+  ['dessert','Rivaaj Sweets & Bakers',4.8,'','南亚甜品','种类多，现做现卖',24.6513689,46.6897736],
+  ['dessert','Sukkly Alyasmin',4.7,'','手工冰淇淋','藏在 Backyard，口味多',24.8278457,46.639905],
+  ['dessert','Methaas Bakery & Desserts',4.5,'','南亚甜点小吃','Chana chaat、gol gappe',24.6756643,46.7086614],
+  ['dessert','CHOCOMELT (Riyadh Park)',4.4,'＄＄＄','甜品 · 咖啡','蛋糕配沙特咖啡',24.7565116,46.6295146],
+  ['dessert','KAYU',4.4,'','法式甜点','Al Dabab，巧克力慕斯不错',24.7069101,46.7068837],
+  // 水烟
+  ['hookah','Mercury Lounge',4.8,'＄＄','水烟 · 小食','氛围安静，24 小时',24.6992876,46.6895744],
+  ['hookah','Pinguino Lounge',4.8,'','水烟 lounge','服务好（注意有最低消费）',24.6825324,46.6717542],
+  ['hookah','O.G.G',4.8,'','水烟 · 咖啡','Al Narjis，24 小时，性价比高',24.8370522,46.6852084],
+  ['hookah','V Lounge',4.7,'','水烟 lounge','Qurtubah，被评最佳水烟之一',24.8358599,46.7396433],
+  ['hookah','Half Month Lounge',4.7,'','水烟 · 日料','24 小时，深夜首选',24.7049672,46.6847996],
+  ['hookah','HuQQa Riyadh',4.6,'','水烟 · 餐厅','An Nakheel，有室外座',24.7376778,46.6300423],
+  // 娱乐
+  ['entertainment','House of Hype',4.7,'','沉浸式体验','Riyadh BLVD，拍照打卡',24.7678613,46.6043777],
+  ['entertainment','Prison Island',4.7,'','密室闯关','Qurtubah，适合团建',24.8264245,46.729034],
+  ['entertainment','Boulevard World',4.6,'','主题乐园','一晚“环游”各国',24.7765816,46.6018485],
+  ['entertainment','Monkey Land',4.6,'','亲子室内乐园','适合带小朋友',24.8165446,46.7805047],
+  ['entertainment','Harry Potter: A Riyadh Season Adventure',4.5,'','沉浸式展览','Boulevard City，哈迷必去',24.7712512,46.6050848],
+  ['entertainment','The Sphere',4.5,'','360° 环幕影院','Boulevard World 地标',24.7783125,46.6015625],
+  ['entertainment','6Meem – iCombat',4.5,'','真人激光对战','运动量大，朋友局',24.8246419,46.5616668],
+];
+function buildSeed() {
+  return SEED.map((s, i) => ({
+    id: 'seed_' + i, cat: s[0], name: s[1], rating: s[2], price: s[3],
+    style: s[4], note: '', address: '', // address 留空（用导航坐标即可）
+    lat: s[6], lng: s[7], createdAt: new Date(Date.now() + i*1000).toISOString(),
+    style2: s[5]
+  })).map(p => ({ id:p.id, name:p.name, cat:p.cat, rating:p.rating, price:p.price, style:p.style2, address:'', note:'', lat:p.lat, lng:p.lng, createdAt:p.createdAt }));
+}
+
+// ─── Boot ─────────────────────────────────────────────────────
+async function boot() {
+  initMap();
+  initSheet();
+  setCloudBadge('本地存储', false);
+  await DB.init();
+  if (cloudEnabled) {
+    setCloudBadge('☁️ 云端共享', true);
+  }
+  await DB.loadAll();
+  // 首次为空 → 灌入真实高分店铺
+  if (places.length === 0) {
+    places = buildSeed();
+    for (const p of places) await DB.upsertPlace(p);
+  }
+  renderAll();
+}
+boot();
+</script>
+</body>
+</html>
